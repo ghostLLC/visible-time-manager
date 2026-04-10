@@ -1,0 +1,14 @@
+package com.vtm.app.model
+
+import androidx.compose.ui.graphics.Color
+
+data class TimeTask(
+    val id: String,
+    val title: String,
+    val type: String,
+    val startHour: Int, // 0-23
+    val startMinute: Int, // 0-59
+    val endHour: Int,
+    val endMinute: Int,
+    val color: Color
+)
