@@ -14,6 +14,37 @@
 .cxx
 local.properties
 
+# Android Studio / IntelliJ
+.idea/
+*.ipr
+*.iws
+
+# Android / Gradle build outputs
+**/build/
+**/out/
+/app/release/
+/app/debug/
+
+# Native / CMake
+.externalNativeBuild/
+.cxx/
+
+# Signing / secrets
+*.jks
+*.keystore
+keystore.properties
+*.pem
+*.p12
+*.key
+
+# Logs / OS noise
+*.log
+Thumbs.db
+
+# Kotlin / Java crash logs
+hs_err_pid*
+replay_pid*
+
 # read_pdf generated files
 page_*.png
 *.pdf
