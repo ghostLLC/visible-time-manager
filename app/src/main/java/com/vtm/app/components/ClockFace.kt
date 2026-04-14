@@ -1,8 +1,8 @@
 package com.vtm.app.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -13,90 +13,160 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vtm.app.model.TimeTask
 import com.vtm.app.ui.theme.ClockCircleDark
 import com.vtm.app.ui.theme.ClockCircleLight
+import kotlin.math.max
+import kotlin.math.min
 
 @Composable
 fun ClockFace(
     isNightMode: Boolean,
     tasks: List<TimeTask>,
-    modifier: Modifier = Modifier
+    centerTitle: String,
+    centerSubtitle: String,
+    modifier: Modifier = Modifier,
 ) {
-    val isSystemDark = isSystemInDarkTheme()
-    val circleColor = if (isSystemDark) ClockCircleDark else ClockCircleLight
+    val circleColor = if (isNightMode) ClockCircleDark else ClockCircleLight
     val centerTextColor = MaterialTheme.colorScheme.onBackground
+    val activeWindowLabel = if (isNightMode) "18:00-6:00" else "6:00-18:00"
 
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .padding(16.dp),
-        contentAlignment = Alignment.Center
+            .padding(12.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val strokeWidth = 12.dp.toPx()
-            val radius = size.minDimension / 2 - strokeWidth
-            val innerRadius = radius - 48.dp.toPx()
+            val outerRadius = size.minDimension / 2 - strokeWidth
+            val innerRadius = outerRadius - 64.dp.toPx()
+            val arcRadius = (outerRadius + innerRadius) / 2
+            val arcStroke = outerRadius - innerRadius
+            val ringTopLeft = Offset(center.x - arcRadius, center.y - arcRadius)
+            val ringSize = Size(arcRadius * 2, arcRadius * 2)
 
-            // Draw outer and inner circles
             drawCircle(
                 color = circleColor,
-                radius = radius,
-                style = Stroke(width = 1.dp.toPx())
+                radius = outerRadius,
+                style = Stroke(width = 1.dp.toPx()),
             )
             drawCircle(
                 color = circleColor,
                 radius = innerRadius,
-                style = Stroke(width = 1.dp.toPx())
+                style = Stroke(width = 1.dp.toPx()),
             )
 
-            // Draw tasks as arcs
-            val arcRadius = (radius + innerRadius) / 2
-            val arcStroke = radius - innerRadius
+            val inactiveColor = circleColor.copy(alpha = 0.16f)
+            drawArc(
+                color = inactiveColor,
+                startAngle = 90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = ringTopLeft,
+                size = ringSize,
+                style = Stroke(width = arcStroke, cap = StrokeCap.Round),
+            )
 
             tasks.forEach { task ->
-                val offsetHours = if (isNightMode) 12 else 0
-                val startHourFloat = task.startHour + task.startMinute / 60f
-                val endHourFloat = task.endHour + task.endMinute / 60f
-
-                // Draw if falls in current 12-hour window
-                if (startHourFloat < offsetHours + 12 && endHourFloat > offsetHours) {
-                    val drawStart = maxOf(startHourFloat, offsetHours.toFloat()) - offsetHours
-                    val drawEnd = minOf(endHourFloat, (offsetHours + 12).toFloat()) - offsetHours
-
-                    val startAngle = -90f + (drawStart / 12f) * 360f
-                    val sweepAngle = ((drawEnd - drawStart) / 12f) * 360f
-
+                segmentsForWindow(task, isNightMode).forEach { segment ->
                     drawArc(
                         color = task.color,
-                        startAngle = startAngle,
-                        sweepAngle = sweepAngle,
+                        startAngle = 90f + segment.startFraction * 360f,
+                        sweepAngle = segment.sweepFraction * 360f,
                         useCenter = false,
-                        topLeft = Offset(
-                            center.x - arcRadius,
-                            center.y - arcRadius
-                        ),
-                        size = Size(arcRadius * 2, arcRadius * 2),
-                        style = Stroke(width = arcStroke, cap = StrokeCap.Butt)
+                        topLeft = ringTopLeft,
+                        size = ringSize,
+                        style = Stroke(width = arcStroke, cap = StrokeCap.Round),
                     )
                 }
             }
         }
 
-        // Labels
-        Text("12", modifier = Modifier.align(Alignment.TopCenter).padding(top = 40.dp), fontSize = 14.sp, color = circleColor)
-        Text("3", modifier = Modifier.align(Alignment.CenterEnd).padding(end = 40.dp), fontSize = 14.sp, color = circleColor)
-        Text("6", modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp), fontSize = 14.sp, color = circleColor)
-        Text("9", modifier = Modifier.align(Alignment.CenterStart).padding(start = 40.dp), fontSize = 14.sp, color = circleColor)
+        Text(
+            text = "12",
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 30.dp),
+            fontSize = 13.sp,
+            color = circleColor.copy(alpha = 0.72f),
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            text = "3",
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 30.dp),
+            fontSize = 13.sp,
+            color = circleColor.copy(alpha = 0.72f),
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            text = "6",
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 30.dp),
+            fontSize = 13.sp,
+            color = circleColor.copy(alpha = 0.72f),
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            text = "9",
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 30.dp),
+            fontSize = 13.sp,
+            color = circleColor.copy(alpha = 0.72f),
+            fontWeight = FontWeight.Medium,
+        )
 
-        // Center Text
-        val centerText = if (tasks.isEmpty()) "empty" else "filled1"
-        Text(centerText, color = centerTextColor, fontWeight = FontWeight.Medium)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 42.dp),
+        ) {
+            Text(
+                text = activeWindowLabel,
+                color = centerTextColor.copy(alpha = 0.38f),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+private data class ClockSegment(
+    val startFraction: Float,
+    val sweepFraction: Float,
+)
+
+private fun segmentsForWindow(task: TimeTask, isNightMode: Boolean): List<ClockSegment> {
+    val startAbsolute = task.startHour * 60 + task.startMinute
+    val endAbsolute = task.endHour * 60 + task.endMinute
+    val normalizedEnd = if (endAbsolute <= startAbsolute) endAbsolute + 24 * 60 else endAbsolute
+    val windows = if (isNightMode) {
+        listOf(18 * 60 to 30 * 60)
+    } else {
+        listOf(6 * 60 to 18 * 60)
+    }
+
+    val taskRanges = listOf(
+        startAbsolute to normalizedEnd,
+        startAbsolute + 24 * 60 to normalizedEnd + 24 * 60,
+    )
+
+    return buildList {
+        windows.forEach { window ->
+            taskRanges.forEach { range ->
+                val overlapStart = max(window.first, range.first)
+                val overlapEnd = min(window.second, range.second)
+                if (overlapEnd > overlapStart) {
+                    add(
+                        ClockSegment(
+                            startFraction = (overlapStart - window.first) / (12f * 60f),
+                            sweepFraction = (overlapEnd - overlapStart) / (12f * 60f),
+                        ),
+                    )
+                }
+            }
+        }
     }
 }
