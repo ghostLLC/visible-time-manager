@@ -1,16 +1,25 @@
 package com.vtm.app.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+
+
 import androidx.compose.foundation.BorderStroke
 
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -22,10 +31,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+
+import androidx.compose.foundation.layout.Box
+
+
+
+
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+
 import androidx.compose.foundation.pager.rememberPagerState
+
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.rememberScrollState
+
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -44,18 +64,36 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+
+
+
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import androidx.compose.ui.Alignment
+
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+
+
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+
+
 import androidx.compose.ui.unit.dp
 
 import androidx.compose.ui.unit.sp
@@ -100,10 +138,48 @@ private val taskTypeColors = mapOf(
 )
 private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
+private fun MainScreenMode.transitionLevel(): Int = when (this) {
+    MainScreenMode.Normal -> 0
+    MainScreenMode.Set -> 1
+    MainScreenMode.SetProject -> 2
+}
+
+
+
+
+
+private val supportQuotes = listOf(
+    "Lost time is never found again. — Franklin",
+    "Time stays long enough for those who use it. — Leonardo da Vinci",
+    "The future depends on what you do today. — Gandhi",
+    "You may delay, but time will not. — Franklin",
+    "Well used time is the step to a fuller life. — Adapted",
+    "Take time while time remains. — Hemingway",
+    "The shorter way to do many things is to do one thing at a time. — Mozart",
+    "Light tomorrow begins with a focused night. — Adapted",
+    "Time is the most valuable thing we spend. — Theophrastus",
+    "Small nightly hours shape the next bright day. — Adapted",
+)
+
+
+
+
+
+private fun splitSupportQuote(quote: String): Pair<String, String?> {
+    val separator = " — "
+    return if (quote.contains(separator)) {
+        val parts = quote.split(separator, limit = 2)
+        parts[0] to parts.getOrNull(1)
+    } else {
+        quote to null
+    }
+}
+
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
+
     isNightMode: Boolean,
     onNightModeChange: (Boolean) -> Unit,
 ) {
@@ -112,34 +188,34 @@ fun MainScreen(
         mutableStateOf(
             listOf(
                 TimeTask(
-                    id = "focus-study",
-                    title = "Morning Review",
-                    type = "Study",
-                    startHour = 9,
-                    startMinute = 0,
-                    endHour = 10,
-                    endMinute = 30,
-                    color = taskTypeColors.getValue("Study"),
-                ),
-                TimeTask(
-                    id = "project-work",
-                    title = "Visible Time Prototype",
+                    id = "day-deep-work",
+                    title = "Deep Work Block",
                     type = "Work",
-                    startHour = 14,
+                    startHour = 10,
                     startMinute = 0,
-                    endHour = 16,
+                    endHour = 14,
                     endMinute = 0,
                     color = taskTypeColors.getValue("Work"),
                 ),
                 TimeTask(
+                    id = "evening-study",
+                    title = "Evening Study Sprint",
+                    type = "Study",
+                    startHour = 16,
+                    startMinute = 0,
+                    endHour = 19,
+                    endMinute = 0,
+                    color = taskTypeColors.getValue("Study"),
+                ),
+                TimeTask(
                     id = "night-reset",
-                    title = "Evening Walk",
-                    type = "Life",
-                    startHour = 20,
-                    startMinute = 30,
-                    endHour = 21,
-                    endMinute = 30,
-                    color = taskTypeColors.getValue("Life"),
+                    title = "Night Reset Session",
+                    type = "Exercise",
+                    startHour = 4,
+                    startMinute = 0,
+                    endHour = 9,
+                    endMinute = 0,
+                    color = taskTypeColors.getValue("Exercise"),
                 ),
             ),
         )
@@ -154,14 +230,24 @@ fun MainScreen(
     var draftEndMinute by rememberSaveable { mutableStateOf(0) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var taskPendingDelete by remember { mutableStateOf<TimeTask?>(null) }
+    var showEditDialog by rememberSaveable { mutableStateOf(false) }
+    var taskPendingEdit by remember { mutableStateOf<TimeTask?>(null) }
+    var editingTaskId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val editingTask = remember(tasks, editingTaskId) {
+        tasks.firstOrNull { it.id == editingTaskId }
+    }
+    val tasksExcludingEditing = remember(tasks, editingTaskId) {
+        tasks.filterNot { it.id == editingTaskId }
+    }
 
 
 
     val draftStartTotalMinutes = draftStartHour * 60 + draftStartMinute
     val draftEndTotalMinutes = draftEndHour * 60 + draftEndMinute
     val earliestDraftEndTotalMinutes = (draftStartTotalMinutes + 1).coerceAtMost(23 * 60 + 59)
-    val draftOverlapTask = remember(tasks, draftStartTotalMinutes, draftEndTotalMinutes) {
-        tasks.firstOrNull {
+    val draftOverlapTask = remember(tasksExcludingEditing, draftStartTotalMinutes, draftEndTotalMinutes) {
+        tasksExcludingEditing.firstOrNull {
             rangesOverlap(
                 startA = draftStartTotalMinutes,
                 endA = draftEndTotalMinutes,
@@ -205,6 +291,7 @@ fun MainScreen(
     val previewTasks = remember(
         sortedTasks,
         screenMode,
+        editingTaskId,
         draftTitle,
         draftType,
         draftStartHour,
@@ -217,16 +304,18 @@ fun MainScreen(
             sortedTasks
         } else {
             val draftPreviewTask = TimeTask(
-                id = "draft-preview",
-                title = draftTitle.ifBlank { "New ${draftType} Project" },
+                id = editingTaskId ?: "draft-preview",
+                title = draftTitle.ifBlank {
+                    if (editingTaskId != null) "Edited ${draftType} Project" else "New ${draftType} Project"
+                },
                 type = draftType,
                 startHour = draftStartHour,
                 startMinute = draftStartMinute,
                 endHour = draftEndHour,
                 endMinute = draftEndMinute,
-                color = previewDraftColor(sortedTasks, draftType),
+                color = taskTypeColor(draftType),
             )
-            (sortedTasks + draftPreviewTask).sortedBy { it.startTotalMinutes() }
+            (tasksExcludingEditing + draftPreviewTask).sortedBy { it.startTotalMinutes() }
         }
     }
 
@@ -235,14 +324,29 @@ fun MainScreen(
 
 
 
+
     val pagerState = rememberPagerState(pageCount = { 2 })
+    val supportQuote = remember { supportQuotes.random() }
+    val (supportQuoteBody, supportQuoteAuthor) = remember(supportQuote) {
+        splitSupportQuote(supportQuote)
+    }
+
+
+
+
+
+
+
+
     val primaryActionLabel = when (screenMode) {
+
         MainScreenMode.Normal -> "SET"
         MainScreenMode.Set -> "Back"
         MainScreenMode.SetProject -> "Back"
     }
 
     fun resetDraft() {
+        editingTaskId = null
         draftTitle = ""
         draftType = taskTypeOptions.first()
         draftStartHour = if (isNightMode) 19 else 8
@@ -250,6 +354,20 @@ fun MainScreen(
         draftEndHour = if (isNightMode) 20 else 9
         draftEndMinute = 0
         typeMenuExpanded = false
+    }
+
+    fun beginEditing(task: TimeTask) {
+        editingTaskId = task.id
+        draftTitle = task.title
+        draftType = task.type
+        draftStartHour = task.startHour
+        draftStartMinute = task.startMinute
+        draftEndHour = task.endHour
+        draftEndMinute = task.endMinute
+        typeMenuExpanded = false
+        taskPendingEdit = null
+        showEditDialog = false
+        screenMode = MainScreenMode.SetProject
     }
 
     fun updateDraftStart(totalMinutes: Int) {
@@ -272,17 +390,17 @@ fun MainScreen(
     fun saveDraft() {
         if (draftTimeError != null) return
         val title = draftTitle.ifBlank { "New ${draftType} Project" }
-        val newTask = TimeTask(
-            id = "task-${System.currentTimeMillis()}",
+        val savedTask = TimeTask(
+            id = editingTaskId ?: "task-${System.currentTimeMillis()}",
             title = title,
             type = draftType,
             startHour = draftStartHour,
             startMinute = draftStartMinute,
             endHour = draftEndHour,
             endMinute = draftEndMinute,
-            color = nextAvailableTaskColor(tasks, preferred = taskTypeColors[draftType] ?: ClockBlue),
+            color = taskTypeColor(draftType),
         )
-        tasks = (tasks + newTask).sortedBy { it.startTotalMinutes() }
+        tasks = (tasksExcludingEditing + savedTask).sortedBy { it.startTotalMinutes() }
         screenMode = MainScreenMode.Normal
         resetDraft()
     }
@@ -322,47 +440,59 @@ fun MainScreen(
                 .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(
-                text = screenHeadline(screenMode = screenMode, isNightMode = isNightMode),
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-                textAlign = TextAlign.Center,
-                lineHeight = 34.sp,
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = screenSupportText(screenMode = screenMode, isNightMode = isNightMode),
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            Crossfade(
-                targetState = isNightMode,
-                animationSpec = tween(durationMillis = 280),
-                modifier = Modifier.fillMaxWidth(),
-                label = "mode-clock-crossfade",
-            ) { animatedNightMode ->
-                ClockFace(
-                    isNightMode = animatedNightMode,
-                    tasks = previewTasks,
-                    centerTitle = "",
-                    centerSubtitle = "",
+            if (screenMode == MainScreenMode.Normal) {
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = supportQuoteBody,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontStyle = FontStyle.Italic,
+                        fontFamily = FontFamily.Serif,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    supportQuoteAuthor?.let { author ->
+
+                        Text(
+                            text = "— $author",
+                            modifier = Modifier.fillMaxWidth(),
+                            fontSize = 11.sp,
+                            lineHeight = 13.sp,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            textAlign = TextAlign.End,
+                            fontStyle = FontStyle.Italic,
+                            fontFamily = FontFamily.Serif,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+            } else {
+                Spacer(modifier = Modifier.height(4.dp))
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            ClockFace(
+                isNightMode = isNightMode,
+                tasks = previewTasks,
+                centerTitle = "",
+                centerSubtitle = "",
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+
+            Spacer(modifier = Modifier.height(30.dp))
+
 
             if (screenMode != MainScreenMode.SetProject) {
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -386,21 +516,41 @@ fun MainScreen(
                 Spacer(modifier = Modifier.height(14.dp))
             }
 
-            Box(
+            AnimatedContent(
+                targetState = screenMode,
+                transitionSpec = {
+                    val movingForward = targetState.transitionLevel() > initialState.transitionLevel()
+                    val duration = 320
+                    (slideInHorizontally(
+                        animationSpec = tween(durationMillis = duration),
+                        initialOffsetX = { fullWidth -> if (movingForward) fullWidth / 5 else -fullWidth / 5 },
+                    ) + fadeIn(animationSpec = tween(durationMillis = duration))) togetherWith
+                        (slideOutHorizontally(
+                            animationSpec = tween(durationMillis = duration),
+                            targetOffsetX = { fullWidth -> if (movingForward) -fullWidth / 6 else fullWidth / 6 },
+                        ) + fadeOut(animationSpec = tween(durationMillis = duration))) using
+                        SizeTransform(clip = false)
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f, fill = true),
-            ) {
-                when (screenMode) {
+                label = "screen-mode-content",
+            ) { animatedScreenMode ->
+                when (animatedScreenMode) {
                     MainScreenMode.Normal -> {
                         HorizontalPager(
                             state = pagerState,
                             modifier = Modifier.fillMaxWidth(),
                             userScrollEnabled = visibleTasks.isNotEmpty(),
+                            verticalAlignment = Alignment.Top,
                         ) { page ->
                             when (page) {
                                 0 -> {
-                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .fillMaxSize(),
+                                    ) {
                                         ProjectSummaryCard(
                                             sectionTitle = if (currentTask == null) "No Project Currently" else "Current Project",
                                             task = currentTask,
@@ -416,7 +566,18 @@ fun MainScreen(
                                 }
 
                                 else -> {
-                                    TimelinePreview(tasks = timelineTasksForMode(sortedTasks, isNightMode))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .fillMaxSize(),
+                                        contentAlignment = Alignment.TopStart,
+                                    ) {
+                                        TimelinePreview(
+                                            tasks = sortedTasks,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+
+                                    }
                                 }
                             }
                         }
@@ -425,11 +586,16 @@ fun MainScreen(
                     MainScreenMode.Set -> {
                         SetStageCard(
                             hasTasks = tasks.isNotEmpty(),
-                            onProceed = {
+                            onNewProject = {
                                 resetDraft()
                                 screenMode = MainScreenMode.SetProject
                             },
+                            onEditProject = {
+                                taskPendingEdit = null
+                                showEditDialog = true
+                            },
                             onDeleteProject = {
+                                taskPendingDelete = null
                                 showDeleteDialog = true
                             },
                         )
@@ -442,6 +608,7 @@ fun MainScreen(
                                 .verticalScroll(rememberScrollState()),
                         ) {
                             DraftProjectCard(
+                                isEditing = editingTaskId != null,
                                 title = draftTitle,
                                 onTitleChange = { onTitleChange -> draftTitle = onTitleChange },
                                 selectedType = draftType,
@@ -456,9 +623,9 @@ fun MainScreen(
                                 endHour = draftEndHour,
                                 endMinute = draftEndMinute,
                                 earliestEndTotalMinutes = earliestDraftEndTotalMinutes,
-                                occupiedStartTimes = unavailableStartTimes(tasks),
-                                occupiedEndTimes = unavailableEndTimes(tasks, earliestDraftEndTotalMinutes),
-                                draftColor = previewDraftColor(tasks, draftType),
+                                occupiedStartTimes = unavailableStartTimes(tasksExcludingEditing),
+                                occupiedEndTimes = unavailableEndTimes(tasksExcludingEditing, earliestDraftEndTotalMinutes),
+                                draftColor = previewDraftColor(draftType),
                                 timeError = draftTimeError,
                                 onSelectStartTime = { updateDraftStart(it) },
                                 onSelectEndTime = { updateDraftEnd(it) },
@@ -468,6 +635,7 @@ fun MainScreen(
                     }
                 }
             }
+
             if (showDeleteDialog) {
                 DeleteProjectDialog(
                     tasks = sortedTasks,
@@ -488,10 +656,116 @@ fun MainScreen(
                     },
                 )
             }
+            if (showEditDialog) {
+                EditProjectDialog(
+                    tasks = sortedTasks,
+                    pendingEdit = taskPendingEdit,
+                    onSelectTask = { taskPendingEdit = it },
+                    onDismiss = {
+                        showEditDialog = false
+                        taskPendingEdit = null
+                    },
+                    onConfirmEdit = {
+                        taskPendingEdit?.let { beginEditing(it) }
+                    },
+                )
+            }
         }
     }
 
 
+}
+
+
+
+@Composable
+private fun EditProjectDialog(
+    tasks: List<TimeTask>,
+    pendingEdit: TimeTask?,
+    onSelectTask: (TimeTask) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirmEdit: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Edit project",
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
+        text = {
+            if (tasks.isEmpty()) {
+                Text(
+                    text = "There are no saved projects to edit yet.",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Choose one project to update.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                        fontSize = 13.sp,
+                    )
+                    tasks.forEach { task ->
+                        val selected = pendingEdit?.id == task.id
+                        OutlinedButton(
+                            onClick = { onSelectTask(task) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (selected) task.color else MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
+                            ),
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(10.dp)
+                                            .height(10.dp)
+                                            .background(task.color, CircleShape),
+                                    )
+                                    Text(
+                                        text = "${iconForType(task.type)} ${task.title}",
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Text(
+                                    text = "${task.type} · ${task.prettyTimeRange()}",
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirmEdit,
+                enabled = pendingEdit != null && tasks.isNotEmpty(),
+            ) {
+                Text("Edit")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+        shape = RoundedCornerShape(24.dp),
+    )
 }
 
 
@@ -595,45 +869,100 @@ private fun ModeToggleRow(
     onNightModeChange: (Boolean) -> Unit,
 ) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f),
+                shape = RoundedCornerShape(15.dp),
+            )
+            .padding(horizontal = 3.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CompactModeChip(
-            text = "Day",
+            text = "☀",
+            timeRange = "6:00-18:00",
             selected = !isNightMode,
             onClick = { onNightModeChange(false) },
         )
         CompactModeChip(
-            text = "Night",
+            text = "🌙",
+            timeRange = "18:00-6:00",
             selected = isNightMode,
             onClick = { onNightModeChange(true) },
         )
+
+
     }
 }
 
 @Composable
 private fun CompactModeChip(
     text: String,
+    timeRange: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    OutlinedButton(
+    Button(
         onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp, vertical = 0.dp),
+        shape = RoundedCornerShape(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 9.dp, vertical = 5.dp),
+        elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
+            defaultElevation = if (selected) 2.dp else 0.dp,
+            pressedElevation = if (selected) 3.dp else 0.dp,
+            focusedElevation = if (selected) 2.dp else 0.dp,
+            hoveredElevation = if (selected) 2.dp else 0.dp,
+        ),
+        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.surface
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
+            },
+            contentColor = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+        ),
         border = BorderStroke(
             1.dp,
-            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
+            if (selected) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.62f)
+            } else {
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)
+            },
         ),
     ) {
-        Text(
-            text = text,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            fontSize = 14.sp,
-        )
+        Column(
+            modifier = Modifier.width(54.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            Text(
+                text = text,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.76f),
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                fontSize = 14.sp,
+            )
+
+            Text(
+                text = timeRange,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.30f)
+                },
+                fontWeight = FontWeight.Medium,
+                fontSize = 8.sp,
+            )
+        }
     }
 }
+
+
+
+
+
 
 
 
@@ -643,6 +972,7 @@ private fun CompactModeChip(
 
 @Composable
 private fun DraftProjectCard(
+    isEditing: Boolean,
     title: String,
     onTitleChange: (String) -> Unit,
     selectedType: String,
@@ -671,26 +1001,85 @@ private fun DraftProjectCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 20.dp),
+                .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Box(
-                    modifier = Modifier
-                        .width(12.dp)
-                        .height(12.dp)
-                        .background(draftColor, CircleShape),
-                )
-                Text(
-                    text = "Set project",
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(12.dp)
+                            .height(12.dp)
+                            .background(draftColor, CircleShape),
+                    )
+                    Text(
+                        text = if (isEditing) "Edit project" else "Set project",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                }
+
+                Box {
+                    OutlinedButton(
+                        onClick = onToggleTypeMenu,
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, draftColor.copy(alpha = 0.35f)),
+                        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                            containerColor = draftColor.copy(alpha = 0.08f),
+                            contentColor = draftColor,
+                        ),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(10.dp)
+                                    .height(10.dp)
+                                    .background(draftColor, CircleShape),
+                            )
+                            Text(
+                                text = "Type · $selectedType",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = draftColor,
+                            )
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = typeMenuExpanded,
+                        onDismissRequest = { if (typeMenuExpanded) onToggleTypeMenu() },
+                    ) {
+                        taskTypeOptions.forEach { option ->
+                            val optionColor = taskTypeColor(option)
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(10.dp)
+                                                .height(10.dp)
+                                                .background(optionColor, CircleShape),
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(option)
+                                    }
+                                },
+                                onClick = { onSelectType(option) },
+                            )
+                        }
+                    }
+                }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             OutlinedTextField(
                 value = title,
                 onValueChange = onTitleChange,
@@ -700,53 +1089,7 @@ private fun DraftProjectCard(
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
             )
-            Spacer(modifier = Modifier.height(14.dp))
-            Box {
-                OutlinedButton(
-                    onClick = onToggleTypeMenu,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .width(12.dp)
-                                .height(12.dp)
-                                .background(draftColor, CircleShape),
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Type · $selectedType")
-                    }
-                }
-                DropdownMenu(
-                    expanded = typeMenuExpanded,
-                    onDismissRequest = onToggleTypeMenu,
-                ) {
-                    taskTypeOptions.forEach { option ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(10.dp)
-                                            .height(10.dp)
-                                            .background(previewDraftColor(emptyList(), option), CircleShape),
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(option)
-                                }
-                            },
-                            onClick = { onSelectType(option) },
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             DualTimePickerRow(
                 startHour = startHour,
                 startMinute = startMinute,
@@ -759,7 +1102,7 @@ private fun DraftProjectCard(
                 onSelectEndTime = onSelectEndTime,
             )
             if (timeError != null) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = timeError,
                     color = MaterialTheme.colorScheme.error,
@@ -767,7 +1110,7 @@ private fun DraftProjectCard(
                     lineHeight = 18.sp,
                 )
             }
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -778,7 +1121,7 @@ private fun DraftProjectCard(
                     enabled = timeError == null,
                     shape = RoundedCornerShape(18.dp),
                 ) {
-                    Text("Save project")
+                    Text(if (isEditing) "Save changes" else "Save project")
                 }
             }
         }
@@ -839,10 +1182,12 @@ private fun CompactTimeField(
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
                 text = label,
@@ -850,13 +1195,12 @@ private fun CompactTimeField(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
             )
-            Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = value,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 28.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 0.5.sp,
+                letterSpacing = 0.3.sp,
             )
         }
     }
@@ -889,53 +1233,131 @@ private fun CompactTimePickerDialog(
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit,
 ) {
-    var selectedTotalMinutes by remember(initialTotalMinutes) {
-        mutableStateOf(
-            nearestSelectableTime(
-                preferred = initialTotalMinutes,
+    val colorScheme = MaterialTheme.colorScheme
+    val isDarkMode = colorScheme.surface.luminance() < 0.5f
+    val dialogContainerColor = if (isDarkMode) {
+        Color(0xFF1A1B1F).copy(alpha = 0.96f)
+    } else {
+        Color(0xFFF8F9FD).copy(alpha = 0.98f)
+    }
+    val titleColor = if (isDarkMode) Color.White.copy(alpha = 0.96f) else Color(0xFF111827)
+    val subtitleColor = if (isDarkMode) Color.White.copy(alpha = 0.92f) else Color(0xFF4B5563)
+    val secondaryButtonColor = if (isDarkMode) {
+        Color.White.copy(alpha = 0.10f)
+    } else {
+        Color(0xFFEEF2F7)
+    }
+    val secondaryButtonContentColor = if (isDarkMode) {
+        Color.White.copy(alpha = 0.88f)
+    } else {
+        Color(0xFF374151)
+    }
+
+
+    val initialResolved = remember(initialTotalMinutes, minTotalMinutes, occupiedTimes) {
+        nearestSelectableTime(
+            preferred = initialTotalMinutes,
+            minTotalMinutes = minTotalMinutes,
+            occupiedTimes = occupiedTimes,
+        )
+    }
+    var selectedHour by remember(initialResolved) { mutableIntStateOf(initialResolved / 60) }
+    var selectedMinute by remember(initialResolved) { mutableIntStateOf(initialResolved % 60) }
+
+    LaunchedEffect(selectedHour, minTotalMinutes, occupiedTimes) {
+        val validMinutes = selectableMinutesForHour(selectedHour, minTotalMinutes, occupiedTimes)
+        if (validMinutes.isEmpty()) {
+            val fallback = nearestSelectableTime(
+                preferred = selectedHour * 60 + selectedMinute,
                 minTotalMinutes = minTotalMinutes,
                 occupiedTimes = occupiedTimes,
-            ),
-        )
+            )
+            selectedHour = fallback / 60
+            selectedMinute = fallback % 60
+        } else if (selectedMinute !in validMinutes) {
+            selectedMinute = validMinutes.minByOrNull { kotlin.math.abs(it - selectedMinute) } ?: validMinutes.first()
+        }
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = {
-            Button(onClick = {
-                onConfirm(
-                    nearestSelectableTime(
-                        preferred = selectedTotalMinutes,
-                        minTotalMinutes = minTotalMinutes,
-                        occupiedTimes = occupiedTimes,
-                    ),
-                )
-            }) {
-                Text("Done")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
         title = {
-            Text(
-                text = "Select time",
-                fontWeight = FontWeight.SemiBold,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Select time",
+                    color = titleColor,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                )
+                Text(
+                    text = formatHourMinute(selectedHour, selectedMinute),
+                    color = subtitleColor,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                )
+            }
         },
         text = {
-            SnapTimePicker(
-                selectedTotalMinutes = selectedTotalMinutes,
-                minTotalMinutes = minTotalMinutes,
-                occupiedTimes = occupiedTimes,
-                onSelected = { selectedTotalMinutes = it },
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                SnapTimePicker(
+                    selectedHour = selectedHour,
+                    selectedMinute = selectedMinute,
+                    minTotalMinutes = minTotalMinutes,
+                    occupiedTimes = occupiedTimes,
+                    isDarkMode = isDarkMode,
+                    onHourSelected = { selectedHour = it },
+                    onMinuteSelected = { selectedMinute = it },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = secondaryButtonColor,
+                            contentColor = secondaryButtonContentColor,
+                        ),
+                    ) {
+                        Text("Cancel", fontWeight = FontWeight.SemiBold)
+                    }
+                    Button(
+                        onClick = {
+                            onConfirm(
+                                nearestSelectableTime(
+                                    preferred = selectedHour * 60 + selectedMinute,
+                                    minTotalMinutes = minTotalMinutes,
+                                    occupiedTimes = occupiedTimes,
+                                ),
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF3B82F6),
+                            contentColor = Color.White,
+                        ),
+                    ) {
+                        Text("Done", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         },
-        shape = RoundedCornerShape(24.dp),
+        confirmButton = {},
+        dismissButton = {},
+        shape = RoundedCornerShape(28.dp),
+        containerColor = dialogContainerColor,
+        tonalElevation = 0.dp,
+        titleContentColor = titleColor,
+        textContentColor = titleColor,
     )
 }
+
+
+
+
 
 
 @Composable
@@ -1001,8 +1423,10 @@ private fun WheelColumn(
 
 @Composable
 private fun SetStageCard(
+
     hasTasks: Boolean,
-    onProceed: () -> Unit,
+    onNewProject: () -> Unit,
+    onEditProject: () -> Unit,
     onDeleteProject: () -> Unit,
 ) {
     OutlinedCard(
@@ -1026,14 +1450,22 @@ private fun SetStageCard(
             Spacer(modifier = Modifier.height(14.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 OutlinedButton(
-                    onClick = onProceed,
+                    onClick = onNewProject,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(18.dp),
                 ) {
-                    Text("Set Project")
+                    Text("New")
+                }
+                OutlinedButton(
+                    onClick = onEditProject,
+                    enabled = hasTasks,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Text("Edit")
                 }
                 OutlinedButton(
                     onClick = onDeleteProject,
@@ -1041,7 +1473,7 @@ private fun SetStageCard(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(18.dp),
                 ) {
-                    Text("Delete Project")
+                    Text("Delete")
                 }
             }
             if (!hasTasks) {
@@ -1115,7 +1547,11 @@ private fun ProjectSummaryCard(
                 )
                 Text(
                     text = if (task == null) sectionTitle else "$sectionTitle: ${iconForType(task.type)} ${task.title}",
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = if (task == null) {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.34f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
                     maxLines = 1,
@@ -1142,52 +1578,42 @@ private fun ProjectSummaryCard(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SnapTimePicker(
-    selectedTotalMinutes: Int,
+    selectedHour: Int,
+    selectedMinute: Int,
     minTotalMinutes: Int,
     occupiedTimes: Set<Int>,
-    onSelected: (Int) -> Unit,
+    isDarkMode: Boolean,
+    onHourSelected: (Int) -> Unit,
+    onMinuteSelected: (Int) -> Unit,
 ) {
+    val enabledHours = remember(minTotalMinutes, occupiedTimes) {
+        (0..23).filter { hour -> selectableMinutesForHour(hour, minTotalMinutes, occupiedTimes).isNotEmpty() }
+    }
+    val effectiveHour = if (selectedHour in enabledHours) selectedHour else enabledHours.firstOrNull() ?: 0
+    val enabledMinutes = remember(effectiveHour, minTotalMinutes, occupiedTimes) {
+        selectableMinutesForHour(effectiveHour, minTotalMinutes, occupiedTimes)
+    }
+    val effectiveMinute = if (selectedMinute in enabledMinutes) selectedMinute else enabledMinutes.firstOrNull() ?: 0
+
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         SnapWheelColumn(
-            label = "Hour",
-            values = (0..23).toList(),
-            selectedValue = selectedTotalMinutes / 60,
+            label = "时",
+            values = enabledHours,
+            selectedValue = effectiveHour,
             modifier = Modifier.weight(1f),
-            isValueEnabled = { hour ->
-                selectableMinutesForHour(hour, minTotalMinutes, occupiedTimes).isNotEmpty()
-            },
-            onSelected = { hour ->
-                val target = nearestSelectableForHour(
-                    hour = hour,
-                    currentMinute = selectedTotalMinutes % 60,
-                    minTotalMinutes = minTotalMinutes,
-                    occupiedTimes = occupiedTimes,
-                )
-                onSelected(target)
-            },
+            isDarkMode = isDarkMode,
+            onSelected = onHourSelected,
         )
         SnapWheelColumn(
-            label = "Minute",
-            values = (0..59).toList(),
-            selectedValue = selectedTotalMinutes % 60,
+            label = "分",
+            values = enabledMinutes,
+            selectedValue = effectiveMinute,
             modifier = Modifier.weight(1f),
-            isValueEnabled = { minute ->
-                val candidate = (selectedTotalMinutes / 60) * 60 + minute
-                candidate >= minTotalMinutes && candidate !in occupiedTimes
-            },
-            onSelected = { minute ->
-                val candidate = (selectedTotalMinutes / 60) * 60 + minute
-                onSelected(
-                    nearestSelectableTime(
-                        preferred = candidate,
-                        minTotalMinutes = minTotalMinutes,
-                        occupiedTimes = occupiedTimes,
-                    ),
-                )
-            },
+            isDarkMode = isDarkMode,
+            onSelected = onMinuteSelected,
         )
     }
 }
@@ -1199,44 +1625,69 @@ private fun SnapWheelColumn(
     values: List<Int>,
     selectedValue: Int,
     modifier: Modifier = Modifier,
-    isValueEnabled: (Int) -> Boolean = { true },
+    isDarkMode: Boolean,
     onSelected: (Int) -> Unit,
 ) {
-    val selectedIndex = values.indexOf(selectedValue).coerceAtLeast(0)
-    val rowHeight = 44.dp
-    val rowHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { rowHeight.roundToPx() }
-    val centerSlots = 2
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = max(0, selectedIndex - centerSlots))
+    val rowHeight = 52.dp
+    val visibleRows = 5
+    val centerSlots = visibleRows / 2
+    val initialIndex = values.indexOf(selectedValue).coerceAtLeast(0)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
     val flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+    val latestSelectedValue by rememberUpdatedState(selectedValue)
+    val latestValues by rememberUpdatedState(values)
+    val latestOnSelected by rememberUpdatedState(onSelected)
+    val labelColor = if (isDarkMode) Color.White.copy(alpha = 0.56f) else Color(0xFF6B7280)
+    val selectionHighlightColor = if (isDarkMode) {
+        Color.White.copy(alpha = 0.10f)
+    } else {
+        Color(0xFFE9EEF8)
+    }
+    val overlayBaseColor = if (isDarkMode) Color(0xFF1A1B1F) else Color(0xFFF8F9FD)
+    val selectedTextColor = if (isDarkMode) Color.White else Color(0xFF111827)
+    val unselectedTextBaseColor = if (isDarkMode) Color.White else Color(0xFF374151)
 
-    fun nearestResolvedValue(index: Int): Int {
-        val candidate = values.getOrNull(index) ?: values.last()
-        return if (isValueEnabled(candidate)) candidate else nearestEnabledValue(values, candidate, isValueEnabled)
+    fun currentCenteredIndex(): Int? {
+        val layoutInfo = listState.layoutInfo
+        if (layoutInfo.visibleItemsInfo.isEmpty()) return null
+        val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
+        return layoutInfo.visibleItemsInfo
+            .minByOrNull { item -> kotlin.math.abs((item.offset + item.size / 2) - viewportCenter) }
+            ?.index
+            ?.coerceIn(0, latestValues.lastIndex)
     }
 
     LaunchedEffect(values, selectedValue) {
-        val target = max(0, values.indexOf(selectedValue) - centerSlots)
-        if (listState.firstVisibleItemIndex != target || listState.firstVisibleItemScrollOffset != 0) {
-            listState.scrollToItem(target)
+        if (values.isEmpty()) return@LaunchedEffect
+        delay(72)
+        if (listState.isScrollInProgress) return@LaunchedEffect
+
+        val targetIndex = values.indexOf(selectedValue).coerceAtLeast(0)
+        val centeredIndex = currentCenteredIndex()
+        if (centeredIndex != null && centeredIndex != targetIndex) {
+            listState.animateScrollToItem(targetIndex)
         }
     }
 
-    LaunchedEffect(listState, values, selectedValue) {
+
+    LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
-            .collect { isScrolling ->
-                if (!isScrolling && values.isNotEmpty()) {
-                    val offsetIndexDelta = ((listState.firstVisibleItemScrollOffset.toFloat() / rowHeightPx).let { if (it >= 0.5f) 1 else 0 })
-                    val snappedIndex = (listState.firstVisibleItemIndex + centerSlots + offsetIndexDelta)
-                        .coerceIn(0, values.lastIndex)
-                    val resolved = nearestResolvedValue(snappedIndex)
-                    if (resolved != selectedValue) {
-                        onSelected(resolved)
-                    }
-                    val targetIndex = max(0, values.indexOf(resolved) - centerSlots)
-                    val targetOffset = 0
-                    if (listState.firstVisibleItemIndex != targetIndex || listState.firstVisibleItemScrollOffset != targetOffset) {
-                        listState.animateScrollToItem(targetIndex, targetOffset)
-                    }
+            .distinctUntilChanged()
+            .filter { scrolling -> !scrolling }
+            .debounce(72)
+            .collectLatest {
+                if (latestValues.isEmpty() || listState.isScrollInProgress) return@collectLatest
+
+                val centeredIndex = currentCenteredIndex() ?: return@collectLatest
+                val resolved = latestValues[centeredIndex]
+                if (resolved != latestSelectedValue) {
+                    latestOnSelected(resolved)
+                    return@collectLatest
+                }
+
+                val targetIndex = latestValues.indexOf(latestSelectedValue).coerceAtLeast(0)
+                if (centeredIndex != targetIndex) {
+                    listState.animateScrollToItem(targetIndex)
                 }
             }
     }
@@ -1244,60 +1695,104 @@ private fun SnapWheelColumn(
     Column(modifier = modifier) {
         Text(
             text = label,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            color = labelColor,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        Box {
-            OutlinedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
-            ) {
-                LazyColumn(
-                    state = listState,
-                    flingBehavior = flingBehavior,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(rowHeight * 5),
-                ) {
-                    items(values.size) { index ->
-                        val option = values[index]
-                        val isSelected = option == selectedValue
-                        val isEnabled = isValueEnabled(option)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(rowHeight)
-                                .clickable(enabled = isEnabled) { onSelected(option) },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = option.toTwoDigits(),
-                                color = when {
-                                    !isEnabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
-                                    isSelected -> MaterialTheme.colorScheme.primary
-                                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
-                                },
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                fontSize = if (isSelected) 22.sp else 18.sp,
-                            )
-                        }
-                    }
-                }
-            }
+        Spacer(modifier = Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(rowHeight * visibleRows),
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(rowHeight)
                     .align(Alignment.Center)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f), RoundedCornerShape(14.dp)),
+                    .background(
+                        selectionHighlightColor,
+                        RoundedCornerShape(16.dp),
+                    ),
             )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(rowHeight * 1.55f)
+                    .align(Alignment.TopCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                overlayBaseColor,
+                                overlayBaseColor.copy(alpha = 0.78f),
+                                Color.Transparent,
+                            ),
+                        ),
+                    ),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(rowHeight * 1.55f)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                overlayBaseColor.copy(alpha = 0.78f),
+                                overlayBaseColor,
+                            ),
+                        ),
+                    ),
+            )
+            LazyColumn(
+                state = listState,
+                flingBehavior = flingBehavior,
+                contentPadding = PaddingValues(vertical = rowHeight * centerSlots),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(values.size) { index ->
+                    val option = values[index]
+                    val isSelected = option == selectedValue
+                    val distance = kotlin.math.abs(index - values.indexOf(selectedValue))
+                    val textAlpha = when (distance) {
+                        0 -> 1f
+                        1 -> 0.62f
+                        2 -> 0.34f
+                        else -> 0.18f
+                    }
+                    val textSize = when (distance) {
+                        0 -> 30.sp
+                        1 -> 24.sp
+                        else -> 19.sp
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(rowHeight)
+                            .clickable { onSelected(option) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = option.toTwoDigits(),
+                            color = if (isSelected) selectedTextColor else unselectedTextBaseColor.copy(alpha = textAlpha),
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            fontSize = textSize,
+                            letterSpacing = (-0.3).sp,
+                        )
+                    }
+                }
+            }
         }
     }
 }
+
+
+
+
+
+
+
 
 
 
@@ -1373,10 +1868,11 @@ private fun unavailableEndTimes(
 ): Set<Int> =
     (0 until minTotalMinutes).toSet() + unavailableStartTimes(tasks)
 
+private fun taskTypeColor(type: String): Color = taskTypeColors[type] ?: ClockBlue
+
 private fun previewDraftColor(
-    tasks: List<TimeTask>,
     draftType: String,
-): Color = nextAvailableTaskColor(tasks, taskTypeColors[draftType] ?: ClockBlue)
+): Color = taskTypeColor(draftType)
 
 private fun nextAvailableTaskColor(
     tasks: List<TimeTask>,
@@ -1390,17 +1886,22 @@ private fun nextAvailableTaskColor(
 
 
 @Composable
-private fun TimelinePreview(tasks: List<TimeTask>) {
+private fun TimelinePreview(
+    tasks: List<TimeTask>,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState()
+
     OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(18.dp),
+                .fillMaxSize()
+                .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
             Text(
                 text = "Today timeline",
@@ -1408,37 +1909,69 @@ private fun TimelinePreview(tasks: List<TimeTask>) {
                 fontWeight = FontWeight.Medium,
                 fontSize = 13.sp,
             )
-            Spacer(modifier = Modifier.height(10.dp))
-            tasks.forEach { task ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = if (tasks.isEmpty()) "All-day view · no projects yet" else "All-day view · ${tasks.size} project(s)",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (tasks.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .width(10.dp)
-                            .height(10.dp)
-                            .background(task.color, CircleShape),
+                    Text(
+                        text = "No projects scheduled for today.",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = task.title,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp,
-                        )
-                        Text(
-                            text = "${iconForType(task.type)} ${task.type} · ${task.prettyTimeRange()}",
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
-                            fontSize = 13.sp,
-                        )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    contentPadding = PaddingValues(bottom = 8.dp),
+                ) {
+                    items(tasks, key = { it.id }) { task ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(10.dp)
+                                    .height(10.dp)
+                                    .background(task.color, CircleShape),
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = task.title,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 15.sp,
+                                )
+                                Text(
+                                    text = "${iconForType(task.type)} ${task.type} · ${task.prettyTimeRange()} · ${taskWindowLabel(task)}",
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+
 
 private fun tasksForMode(
     tasks: List<TimeTask>,
@@ -1462,10 +1995,34 @@ private fun tasksForMode(
     }
 }
 
-private fun timelineTasksForMode(
-    tasks: List<TimeTask>,
-    isNightMode: Boolean,
-): List<TimeTask> = tasksForMode(tasks, isNightMode)
+private fun taskWindowLabel(task: TimeTask): String {
+    val touchesDay = overlapsWindow(task, windowStart = 6 * 60, windowEndExclusive = 18 * 60)
+    val touchesNight = overlapsWindow(task, windowStart = 18 * 60, windowEndExclusive = 30 * 60)
+    return when {
+        touchesDay && touchesNight -> "day + night"
+        touchesNight -> "night"
+        else -> "day"
+    }
+}
+
+private fun overlapsWindow(
+    task: TimeTask,
+    windowStart: Int,
+    windowEndExclusive: Int,
+): Boolean {
+    val taskStart = task.startTotalMinutes()
+    val taskEnd = task.normalizedEndTotalMinutes()
+    val taskRanges = listOf(
+        taskStart to taskEnd,
+        taskStart + 24 * 60 to taskEnd + 24 * 60,
+    )
+    return taskRanges.any { range ->
+        val overlapStart = max(windowStart, range.first)
+        val overlapEnd = kotlin.math.min(windowEndExclusive, range.second)
+        overlapEnd > overlapStart
+    }
+}
+
 
 
 
@@ -1500,26 +2057,24 @@ private fun TimeTask.normalizedEndTotalMinutes(): Int {
 private fun screenHeadline(
     screenMode: MainScreenMode,
     isNightMode: Boolean,
+    isEditing: Boolean,
 ): String {
     return when (screenMode) {
         MainScreenMode.Normal -> if (isNightMode) "Manage your night" else "Manage your day"
         MainScreenMode.Set -> "Shape the visible plan"
-        MainScreenMode.SetProject -> "Set your project"
+        MainScreenMode.SetProject -> if (isEditing) "Edit your project" else "Set your project"
     }
 }
 
 private fun screenSupportText(
     screenMode: MainScreenMode,
-    isNightMode: Boolean,
+    supportQuote: String,
+    isEditing: Boolean,
 ): String {
     return when (screenMode) {
-        MainScreenMode.Normal -> if (isNightMode) {
-            "Night focus, clean clock, fewer distractions."
-        } else {
-            "Day focus, clear clock, ready for the next block."
-        }
+        MainScreenMode.Normal -> supportQuote
         MainScreenMode.Set -> "Choose the next project slot."
-        MainScreenMode.SetProject -> "Set title, type, and time."
+        MainScreenMode.SetProject -> if (isEditing) "Update title, type, and time." else "Set title, type, and time."
     }
 }
 
