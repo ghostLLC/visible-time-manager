@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
@@ -56,10 +57,21 @@ fun ClockFace(
     val sweepDrift = (overshootLift + pulse * 0.12f) * 8f
 
     val circleColor = lerp(ClockCircleLight, ClockCircleDark, clampedProgress)
-    val centerTextColor = MaterialTheme.colorScheme.onBackground
-    val hourLabelColor = centerTextColor.copy(alpha = 0.84f + 0.08f * clampedProgress)
-    val hourTickColor = centerTextColor.copy(alpha = 0.22f + 0.06f * clampedProgress)
-    val handColor = centerTextColor.copy(alpha = 0.9f + 0.08f * clampedProgress)
+    val colorScheme = MaterialTheme.colorScheme
+    val isDarkMode = colorScheme.surface.luminance() < 0.5f
+    val controlFillColor = if (isDarkMode) {
+        colorScheme.surfaceVariant.copy(alpha = 0.92f)
+    } else {
+        colorScheme.surfaceVariant
+    }
+    val controlOutlineColor = if (isDarkMode) {
+        colorScheme.outline.copy(alpha = 0.5f)
+    } else {
+        colorScheme.outline.copy(alpha = 0.34f)
+    }
+    val hourLabelColor = lerp(controlFillColor, colorScheme.onSurface, if (isDarkMode) 0.54f else 0.46f)
+    val hourTickColor = lerp(controlOutlineColor, colorScheme.onSurface, if (isDarkMode) 0.18f else 0.12f)
+    val handColor = lerp(controlFillColor, colorScheme.onSurface, if (isDarkMode) 0.72f else 0.64f)
     val currentTime = LocalTime.now()
 
     Box(

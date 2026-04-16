@@ -1,6 +1,8 @@
 package com.vtm.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
@@ -17,8 +19,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -85,9 +89,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 
 
 import androidx.compose.ui.text.font.FontFamily
+
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -175,10 +182,66 @@ private fun splitSupportQuote(quote: String): Pair<String, String?> {
     }
 }
 
+@Composable
+private fun neutralFilledButtonContainerColor(): Color {
+    val colorScheme = MaterialTheme.colorScheme
+    val isDarkMode = colorScheme.surface.luminance() < 0.5f
+    return if (isDarkMode) {
+        colorScheme.surfaceVariant.copy(alpha = 0.9f)
+    } else {
+        colorScheme.surfaceVariant
+    }
+}
+
+@Composable
+private fun neutralFilledButtonContentColor(): Color {
+    val colorScheme = MaterialTheme.colorScheme
+    val isDarkMode = colorScheme.surface.luminance() < 0.5f
+    return if (isDarkMode) {
+        colorScheme.onSurface.copy(alpha = 0.94f)
+    } else {
+        colorScheme.onSurface
+    }
+}
+
+@Composable
+private fun neutralOutlinedButtonContainerColor(): Color {
+    val colorScheme = MaterialTheme.colorScheme
+    val isDarkMode = colorScheme.surface.luminance() < 0.5f
+    return if (isDarkMode) {
+        colorScheme.surfaceVariant.copy(alpha = 0.34f)
+    } else {
+        colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    }
+}
+
+@Composable
+private fun neutralOutlinedButtonContentColor(): Color {
+    val colorScheme = MaterialTheme.colorScheme
+    val isDarkMode = colorScheme.surface.luminance() < 0.5f
+    return if (isDarkMode) {
+        colorScheme.onSurface.copy(alpha = 0.9f)
+    } else {
+        colorScheme.onSurface.copy(alpha = 0.88f)
+    }
+}
+
+@Composable
+private fun neutralOutlinedBorderColor(): Color {
+    val colorScheme = MaterialTheme.colorScheme
+    val isDarkMode = colorScheme.surface.luminance() < 0.5f
+    return if (isDarkMode) {
+        colorScheme.outline.copy(alpha = 0.46f)
+    } else {
+        colorScheme.outline.copy(alpha = 0.3f)
+    }
+}
+
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
+
 
     isNightMode: Boolean,
     onNightModeChange: (Boolean) -> Unit,
@@ -345,7 +408,37 @@ fun MainScreen(
         MainScreenMode.SetProject -> "Back"
     }
 
+    val canHandleBack = showDeleteDialog || showEditDialog || typeMenuExpanded || screenMode != MainScreenMode.Normal
+
+    BackHandler(enabled = canHandleBack) {
+        when {
+            showDeleteDialog -> {
+                showDeleteDialog = false
+                taskPendingDelete = null
+            }
+
+            showEditDialog -> {
+                showEditDialog = false
+                taskPendingEdit = null
+            }
+
+            typeMenuExpanded -> {
+                typeMenuExpanded = false
+            }
+
+            screenMode == MainScreenMode.SetProject -> {
+                typeMenuExpanded = false
+                screenMode = MainScreenMode.Set
+            }
+
+            screenMode == MainScreenMode.Set -> {
+                screenMode = MainScreenMode.Normal
+            }
+        }
+    }
+
     fun resetDraft() {
+
         editingTaskId = null
         draftTitle = ""
         draftType = taskTypeOptions.first()
@@ -405,7 +498,17 @@ fun MainScreen(
         resetDraft()
     }
 
+    val colorScheme = MaterialTheme.colorScheme
+    val primaryActionContainerColor = neutralFilledButtonContainerColor()
+    val primaryActionContentColor = neutralFilledButtonContentColor()
+
+
+
+    val swipeModeThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
+
     Scaffold(
+
+
         modifier = Modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -424,6 +527,10 @@ fun MainScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp, vertical = 16.dp),
                 shape = RoundedCornerShape(18.dp),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = primaryActionContainerColor,
+                    contentColor = primaryActionContentColor,
+                ),
             ) {
                 Text(
                     text = primaryActionLabel,
@@ -484,8 +591,31 @@ fun MainScreen(
                 tasks = previewTasks,
                 centerTitle = "",
                 centerSubtitle = "",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(isNightMode, swipeModeThresholdPx) {
+                        var accumulatedHorizontalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                accumulatedHorizontalDrag = 0f
+                            },
+                            onHorizontalDrag = { change, dragAmount ->
+                                accumulatedHorizontalDrag += dragAmount
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                when {
+                                    accumulatedHorizontalDrag <= -swipeModeThresholdPx && !isNightMode -> onNightModeChange(true)
+                                    accumulatedHorizontalDrag >= swipeModeThresholdPx && isNightMode -> onNightModeChange(false)
+                                }
+                            },
+                            onDragCancel = {
+                                accumulatedHorizontalDrag = 0f
+                            },
+                        )
+                    },
             )
+
 
 
             Spacer(modifier = Modifier.height(30.dp))
@@ -686,6 +816,12 @@ private fun EditProjectDialog(
     onDismiss: () -> Unit,
     onConfirmEdit: () -> Unit,
 ) {
+    val outlinedContainerColor = neutralOutlinedButtonContainerColor()
+    val outlinedContentColor = neutralOutlinedButtonContentColor()
+    val outlinedBorderColor = neutralOutlinedBorderColor()
+    val filledContainerColor = neutralFilledButtonContainerColor()
+    val filledContentColor = neutralFilledButtonContentColor()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -713,9 +849,13 @@ private fun EditProjectDialog(
                             onClick = { onSelectTask(task) },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(16.dp),
+                            colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                                containerColor = outlinedContainerColor,
+                                contentColor = outlinedContentColor,
+                            ),
                             border = BorderStroke(
                                 1.dp,
-                                if (selected) task.color else MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
+                                if (selected) task.color else outlinedBorderColor,
                             ),
                         ) {
                             Column(
@@ -755,18 +895,28 @@ private fun EditProjectDialog(
             Button(
                 onClick = onConfirmEdit,
                 enabled = pendingEdit != null && tasks.isNotEmpty(),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = filledContainerColor,
+                    contentColor = filledContentColor,
+                ),
             ) {
                 Text("Edit")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                    contentColor = outlinedContentColor,
+                ),
+            ) {
                 Text("Cancel")
             }
         },
         shape = RoundedCornerShape(24.dp),
     )
 }
+
 
 
 
@@ -778,6 +928,12 @@ private fun DeleteProjectDialog(
     onDismiss: () -> Unit,
     onConfirmDelete: () -> Unit,
 ) {
+    val outlinedContainerColor = neutralOutlinedButtonContainerColor()
+    val outlinedContentColor = neutralOutlinedButtonContentColor()
+    val outlinedBorderColor = neutralOutlinedBorderColor()
+    val filledContainerColor = neutralFilledButtonContainerColor()
+    val filledContentColor = neutralFilledButtonContentColor()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -805,9 +961,13 @@ private fun DeleteProjectDialog(
                             onClick = { onSelectTask(task) },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(16.dp),
+                            colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                                containerColor = outlinedContainerColor,
+                                contentColor = outlinedContentColor,
+                            ),
                             border = BorderStroke(
                                 1.dp,
-                                if (selected) task.color else MaterialTheme.colorScheme.outline.copy(alpha = 0.24f),
+                                if (selected) task.color else outlinedBorderColor,
                             ),
                         ) {
                             Column(
@@ -847,18 +1007,28 @@ private fun DeleteProjectDialog(
             Button(
                 onClick = onConfirmDelete,
                 enabled = pendingDelete != null && tasks.isNotEmpty(),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = filledContainerColor,
+                    contentColor = filledContentColor,
+                ),
             ) {
                 Text("Delete")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                    contentColor = outlinedContentColor,
+                ),
+            ) {
                 Text("Cancel")
             }
         },
         shape = RoundedCornerShape(24.dp),
     )
 }
+
 
 
 
@@ -1120,9 +1290,14 @@ private fun DraftProjectCard(
                     onClick = onSave,
                     enabled = timeError == null,
                     shape = RoundedCornerShape(18.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = neutralFilledButtonContainerColor(),
+                        contentColor = neutralFilledButtonContentColor(),
+                    ),
                 ) {
                     Text(if (isEditing) "Save changes" else "Save project")
                 }
+
             }
         }
     }
@@ -1236,22 +1411,18 @@ private fun CompactTimePickerDialog(
     val colorScheme = MaterialTheme.colorScheme
     val isDarkMode = colorScheme.surface.luminance() < 0.5f
     val dialogContainerColor = if (isDarkMode) {
-        Color(0xFF1A1B1F).copy(alpha = 0.96f)
+        colorScheme.surface.copy(alpha = 0.96f)
     } else {
         Color(0xFFF8F9FD).copy(alpha = 0.98f)
     }
-    val titleColor = if (isDarkMode) Color.White.copy(alpha = 0.96f) else Color(0xFF111827)
-    val subtitleColor = if (isDarkMode) Color.White.copy(alpha = 0.92f) else Color(0xFF4B5563)
-    val secondaryButtonColor = if (isDarkMode) {
-        Color.White.copy(alpha = 0.10f)
-    } else {
-        Color(0xFFEEF2F7)
-    }
-    val secondaryButtonContentColor = if (isDarkMode) {
-        Color.White.copy(alpha = 0.88f)
-    } else {
-        Color(0xFF374151)
-    }
+    val titleColor = if (isDarkMode) colorScheme.onSurface.copy(alpha = 0.96f) else Color(0xFF111827)
+    val subtitleColor = if (isDarkMode) colorScheme.onSurface.copy(alpha = 0.92f) else Color(0xFF4B5563)
+    val secondaryButtonColor = neutralOutlinedButtonContainerColor()
+    val secondaryButtonContentColor = neutralOutlinedButtonContentColor()
+    val confirmButtonColor = neutralFilledButtonContainerColor()
+    val confirmButtonContentColor = neutralFilledButtonContentColor()
+
+
 
 
     val initialResolved = remember(initialTotalMinutes, minTotalMinutes, occupiedTimes) {
@@ -1261,6 +1432,7 @@ private fun CompactTimePickerDialog(
             occupiedTimes = occupiedTimes,
         )
     }
+
     var selectedHour by remember(initialResolved) { mutableIntStateOf(initialResolved / 60) }
     var selectedMinute by remember(initialResolved) { mutableIntStateOf(initialResolved % 60) }
 
@@ -1336,8 +1508,8 @@ private fun CompactTimePickerDialog(
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(18.dp),
                         colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF3B82F6),
-                            contentColor = Color.White,
+                            containerColor = confirmButtonColor,
+                            contentColor = confirmButtonContentColor,
                         ),
                     ) {
                         Text("Done", fontWeight = FontWeight.Bold)
@@ -1429,6 +1601,10 @@ private fun SetStageCard(
     onEditProject: () -> Unit,
     onDeleteProject: () -> Unit,
 ) {
+    val outlinedContainerColor = neutralOutlinedButtonContainerColor()
+    val outlinedContentColor = neutralOutlinedButtonContentColor()
+    val outlinedBorderColor = neutralOutlinedBorderColor()
+
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
@@ -1456,6 +1632,11 @@ private fun SetStageCard(
                     onClick = onNewProject,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(18.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = outlinedContainerColor,
+                        contentColor = outlinedContentColor,
+                    ),
+                    border = BorderStroke(1.dp, outlinedBorderColor),
                 ) {
                     Text("New")
                 }
@@ -1464,6 +1645,11 @@ private fun SetStageCard(
                     enabled = hasTasks,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(18.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = outlinedContainerColor,
+                        contentColor = outlinedContentColor,
+                    ),
+                    border = BorderStroke(1.dp, outlinedBorderColor),
                 ) {
                     Text("Edit")
                 }
@@ -1472,6 +1658,11 @@ private fun SetStageCard(
                     enabled = hasTasks,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(18.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        containerColor = outlinedContainerColor,
+                        contentColor = outlinedContentColor,
+                    ),
+                    border = BorderStroke(1.dp, outlinedBorderColor),
                 ) {
                     Text("Delete")
                 }
@@ -1491,11 +1682,15 @@ private fun SetStageCard(
 
 
 
+
 @Composable
 private fun PagerIndicatorRow(
     currentPage: Int,
     pageCount: Int,
 ) {
+    val activeIndicatorColor = neutralFilledButtonContainerColor()
+    val inactiveIndicatorColor = neutralFilledButtonContainerColor().copy(alpha = 0.72f)
+
     Row(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -1506,7 +1701,7 @@ private fun PagerIndicatorRow(
                     .width(8.dp)
                     .height(8.dp)
                     .background(
-                        if (index == currentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.26f),
+                        if (index == currentPage) activeIndicatorColor else inactiveIndicatorColor,
                         CircleShape,
                     ),
             )
@@ -1516,6 +1711,9 @@ private fun PagerIndicatorRow(
         }
     }
 }
+
+
+
 
 @Composable
 private fun ProjectSummaryCard(

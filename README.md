@@ -1,125 +1,347 @@
 # Visible Time Manager (VTM)
 
-## 项目简介
-这是一个基于 **Kotlin + Jetpack Compose** 开发的轻量级 Android 应用程序，旨在帮助用户通过直观的 12 小时制表盘（ClockFace）可视化地管理和记录每天的时间。
+一个基于 **Kotlin + Jetpack Compose + Material 3** 开发的 Android 时间可视化应用。
 
-## 当前开发进度 (AI 接力上下文)
-**给接力 AI 的提示：请读取此文档以了解当前的项目结构和下一步的开发计划。**
+VTM 不走传统列表式待办，而是用 **12 小时钟面** 来展示时间块，让用户用更直观的方式观察当前半天（Day / Night）的时间分配、当前项目、下一个项目，以及当天时间线。
 
-目前项目已经完成了**阶段一**的从 0 到 1 基础架构搭建，并根据原型图（PDF提取）实现了核心 UI 组件。
+---
 
-### 已实现的功能
-1. **基础架构**：完整的 Android Gradle 项目，使用 Jetpack Compose。
-2. **核心 UI 布局** ([MainScreen.kt](./app/src/main/java/com/vtm/app/ui/MainScreen.kt))：
-   - 动态问候语。
-   - 自定义绘制的表盘组件。
-   - Day/Night（日夜）模式切换开关（UI 已实现，暂未绑定深色主题切换）。
-   - 当前任务（Current Project）和下一个任务（Next Project）的卡片布局。
-   - 底部的操作按钮。
-3. **核心可视化组件** ([ClockFace.kt](./app/src/main/java/com/vtm/app/components/ClockFace.kt))：
-   - 使用 Compose `Canvas` API 手工绘制了 12 小时制的表盘。
-   - 实现了根据传入的 `TimeTask` 数据（包含 `startHour`, `startMinute`, `endHour`, `endMinute`, `color`），在表盘上动态绘制对应时间段的彩色扇形（Arc）。
-   - 处理了 Day（0-12时）和 Night（12-24时）模式下任务是否应该显示在当前表盘的逻辑。
-4. **数据模型** ([TimeTask.kt](./app/src/main/java/com/vtm/app/model/TimeTask.kt))：定义了时间任务的基础数据结构。
-5. **主题与颜色** ([Color.kt](./app/src/main/java/com/vtm/app/ui/theme/Color.kt) / [Theme.kt](./app/src/main/java/com/vtm/app/ui/theme/Theme.kt))：定义了日夜模式的基础色值和 Material 3 主题。
+## 1. 当前版本定位
 
-### 待实现的功能 (下一步计划)
-接下来请按照以下优先级继续开发：
+当前仓库对应的是一版已经完成多轮交互和视觉收敛后的**稳定基线**，重点在于：
 
-1. **实现 "Set Project" 交互 (高优先级)**：
-   - 点击 `Set Project` 或底部的 `SET` 按钮时，弹出一个 BottomSheet 或 Dialog。
-   - 弹窗内需要包含：开始时间选择器、结束时间选择器、任务内容输入框（TextField）以及内容类型选择（DropdownMenu）。
-2. **状态管理与数据持久化 (中优先级)**：
-   - 引入 `ViewModel` 来管理当前的 `tasks` 列表和 `isNightMode` 状态。
-   - 引入 **Room Database**，将用户添加的 `TimeTask` 保存到本地 SQLite 数据库中，实现数据的持久化。
-3. **时间计算逻辑 (中优先级)**：
-   - 完善首页卡片的逻辑：根据当前手机的真实时间，计算并实时显示“当前任务剩余时间（x hour(s) x min(s) left）”以及“下一个任务的开始时间”。
-   - 实现顶部问候语的动态更新。
-4. **UI 细节打磨 (低优先级)**：
-   - 完善 Day/Night 模式切换时全局主题颜色的平滑过渡。
-   - 处理跨越 12 点（例如从上午 11 点到下午 2 点）任务在表盘上的显示逻辑（可能需要拆分为两段弧线）。
+- Day / Night 双半天视图
+- 12 小时表盘可视化
+- 当前项目 / 下一个项目 / 今日时间安排联动展示
+- `SET -> Set Project` 两级操作流
+- 新建、编辑、删除项目
+- 更稳定的时间滚轮选择体验
+- 统一后的灰度主题与按钮体系
+- 更符合页面语义的返回手势行为
+- 支持在表盘区域左右滑动切换 Day / Night
 
-### 原型补充说明（2026-04-13）
-以下几点是用户基于墨刀原型补充的真实产品语义，后续实现时必须以此为准：
+> 说明：当前版本以 **本地内存状态** 为主，**暂未接入数据库持久化**。重新启动应用后，项目数据不会保留。
 
-1. **Night 页面应为暗色主题**：
-   - 墨刀原型中未完整表现深色视觉，但实际需求是 Night 页面整体应切换为暗色。
-   - `Day/Night` 开关不仅影响表盘展示区间，也应影响整体页面主题与表盘配色逻辑。
+---
 
-2. **页面流转不是一步直达**：
-   - 图 2 `empty-day-MAIN` 点击底部 `SET` 后，进入图 3 `empty-day-set`。
-   - 图 3 `empty-day-set` 再点击左侧 `Set Project` 后，进入图 4 `empty-day-setproject`。
-   - 因此 `SET` 更像“进入设置态/编辑态”，而 `Set Project` 才是“进入项目录入表单”。
+## 2. 已实现功能
 
-3. **左上角铅笔图标不是编辑入口**：
-   - 左上角的小图标用于可视化描述用户当前行为，不代表“编辑”功能。
-   - 例如用户上午开启“写作业”任务时，可以展示铅笔图标。
-   - 后续实现中，这个图标应理解为根据任务内容自动匹配、调取或生成的行为图标，而不是一个可点击的编辑按钮。
+### 2.1 Day / Night 双模式
 
-## 本地开发说明（回家后无缝续接）
+应用把一天拆成两个 12 小时窗口：
 
-### 1. 获取最新代码
-```bash
-git clone https://github.com/ghostLLC/visible-time-manager.git
-cd visible-time-manager/vtm
-```
+- **Day**：`06:00 - 18:00`
+- **Night**：`18:00 - 次日 06:00`
 
-如果你家里的电脑之前已经拉过仓库，则直接：
+当前支持：
+
+- 启动应用时根据当前时间自动落到合适模式
+- 点击顶部模式切换器切换 Day / Night
+- **在表盘上左右滑动切换模式**
+  - 左滑：切到 Night
+  - 右滑：切到 Day
+- 切换时表盘的主次色条、主题颜色、页面内容同步更新
+
+### 2.2 12 小时表盘（ClockFace）
+
+表盘是整个应用的核心：
+
+- 使用 Compose `Canvas` 自定义绘制
+- 显示完整 **1-12 数字刻度**
+- 显示当前时针
+- 使用外环 / 内环表现 Day 与 Night 的主次关系
+- 项目时间段会以彩色圆弧显示在钟面上
+- 切换 Day / Night 时有平滑动画和轻微弹性过渡
+- 表盘数字、刻线、时针已统一到当前灰度视觉体系，不再使用生硬的纯黑 / 纯白
+
+### 2.3 首页双页内容
+
+主页普通模式下包含两个横向页面：
+
+#### 第 1 页：项目概览
+- **Current Project**：当前项目
+- **Next Project**：下一个项目
+- 根据当前时间自动计算：
+  - 当前项目剩余时间
+  - 下一个项目的开始时间
+
+#### 第 2 页：Today timeline
+- 以纵向时间线方式展示当前半天内可见项目
+- 展示项目标题、类型、时间区间与颜色标识
+
+页面底部有两个分页小圆点，样式已经与整体灰度主题统一。
+
+### 2.4 两级操作流
+
+当前交互不是一步直达编辑表单，而是分成两层：
+
+1. **普通模式（Normal）**
+2. 点击底部主按钮 **`SET`** 进入 **Set 模式**
+3. 再点击 **`Set Project`** 进入项目录入 / 编辑界面
+
+这样做的目的，是让主页浏览态和编辑态之间有明确过渡，不会过于跳跃。
+
+### 2.5 新建 / 编辑 / 删除项目
+
+当前已支持完整项目管理流程：
+
+- **新建项目**
+- **编辑已有项目**
+- **删除项目**
+- 表单输入过程中，表盘会实时显示预览结果
+
+当前项目字段包括：
+
+- 标题
+- 类型（Study / Work / Exercise / Life / Break）
+- 开始时间
+- 结束时间
+- 类型对应的颜色
+
+### 2.6 时间选择器与校验
+
+时间设置页已经做过多轮稳定性优化，当前具备：
+
+- 吸附式滚轮时间选择
+- 小时 / 分钟列独立停靠与回写
+- 减少双列互相抢状态的问题
+- 保证结束时间至少晚于开始时间 1 分钟
+- 自动避让已占用时间段
+- 自动检测时间重叠并阻止保存
+
+如果当前时间段与已有项目冲突，界面会直接给出提示，且不会允许保存。
+
+### 2.7 返回手势语义优化
+
+当前已经接管 Android 页面内返回手势，使其更符合页面层级语义：
+
+- 有弹窗时，返回手势优先等价于 **Cancel / 关闭弹窗**
+- 在 `Set Project` 页面，返回手势先回到 `Set`
+- 在 `Set` 页面，返回手势再回到主页普通模式
+- 只有回到最外层主页时，系统返回才会真正退出应用
+
+也就是说：**有 Back / Cancel 语义的地方，手势返回就会优先执行页面内返回，而不是直接退出 APP。**
+
+### 2.8 主题与视觉风格
+
+当前版本已经明显区别于最初原型，重点调整包括：
+
+- Night 模式不再是纯黑，而是更柔和的深灰体系
+- Day 模式里原本偏黑的按钮已统一为中性灰
+- 描边类按钮（如 Cancel / New / Edit / Delete）已统一
+- 表盘数字、时针、分页点、操作按钮保持一致的灰度层级
+- 首页文案区改成随机惜时短句，增强整体气质
+
+---
+
+## 3. 当前界面结构
+
+### 首页（Normal）
+- 顶部随机短句
+- 中间表盘
+- Day / Night 模式切换器
+- 横向双页内容区
+- 底部 `SET` 主按钮
+
+### Set 模式
+- 用于承接从主页进入编辑态
+- 可进入 `Set Project`
+- 可触发编辑 / 删除流程
+
+### Set Project 模式
+- 填写项目标题
+- 选择项目类型
+- 设置开始 / 结束时间
+- 实时预览表盘效果
+- 保存新项目或保存修改
+
+---
+
+## 4. 技术栈
+
+- **Kotlin**
+- **Jetpack Compose**
+- **Material 3**
+- **Android SDK 34**
+- **Min SDK 26**
+- **JDK 17**
+
+当前主要代码位置：
+
+- `app/src/main/java/com/vtm/app/MainActivity.kt`
+  - 应用入口
+  - 初始化 Day / Night 默认模式
+- `app/src/main/java/com/vtm/app/ui/MainScreen.kt`
+  - 主界面逻辑
+  - 页面状态流转
+  - 项目增删改
+  - 时间选择器
+  - 分页与返回语义
+- `app/src/main/java/com/vtm/app/components/ClockFace.kt`
+  - 自定义 12 小时表盘绘制
+  - 时间段圆弧绘制
+  - 时针 / 数字 / 刻线绘制
+  - 模式切换动画
+- `app/src/main/java/com/vtm/app/model/TimeTask.kt`
+  - 时间项目数据结构
+- `app/src/main/java/com/vtm/app/ui/theme/`
+  - 颜色、主题配置
+
+---
+
+## 5. 当前限制 / 尚未完成
+
+当前版本已经适合继续做 UI 与交互迭代，但仍有这些已知边界：
+
+1. **没有本地持久化**
+   - 目前项目数据只存在于内存中
+   - 重启应用后会恢复为示例数据
+
+2. **没有 ViewModel / Room**
+   - 状态管理目前仍以内嵌 Compose state 为主
+
+3. **没有正式发布流程配置**
+   - 当前仓库可用于本地调试与手动打包 APK
+   - 但尚未完成 release 签名、版本管理和自动化发布
+
+4. **README 之后应继续跟随真实功能更新**
+   - 后续如果继续做持久化、图标系统、提醒能力或统计能力，README 也需要同步更新
+
+---
+
+## 6. 本地开发环境
+
+推荐环境：
+
+- **Android Studio**：较新的稳定版即可
+- **JDK**：17（推荐使用 Android Studio 自带）
+- **Android SDK**：
+  - Compile SDK = 34
+  - Target SDK = 34
+  - Min SDK = 26
+
+项目当前未包含 `gradlew` wrapper 脚本，**最稳妥的方式是直接用 Android Studio 打开并构建**。
+
+---
+
+## 7. 运行项目
+
+### 方式一：Android Studio（推荐）
+
+1. 克隆仓库：
+   ```bash
+   git clone https://github.com/ghostLLC/visible-time-manager.git
+   ```
+2. 用 Android Studio 打开：
+   ```text
+   visible-time-manager/vtm
+   ```
+3. 等待 Gradle Sync 完成
+4. 安装缺失的 Android SDK / Build Tools（如果 IDE 提示）
+5. 连接真机或启动模拟器
+6. 运行 `app` 模块
+
+### 方式二：已有本地仓库继续更新
+
 ```bash
 git pull origin main
 ```
 
-### 2. 推荐开发环境
-- **Android Studio**：建议使用较新的稳定版（优先 Hedgehog / Iguana 及以上）
-- **JDK**：使用 Android Studio 自带 JDK 或 JDK 17
-- **Android SDK**：
-  - Compile SDK / Target SDK：34
-  - Min SDK：26
-- **Gradle**：使用项目自带配置同步即可，不要手动乱改版本
+然后在 Android Studio 中重新同步并运行。
 
-### 3. 启动步骤
-1. 用 Android Studio 打开 `visible-time-manager/vtm`
-2. 等待首次 Gradle Sync 完成
-3. 若提示缺失 SDK，按 IDE 提示安装 Android 14（API 34）相关组件
-4. 连接真机或启动模拟器
-5. 运行 `app` 模块
+---
 
-### 4. 当前开发重点（到 2026-04-14）
-目前项目已经不只是初始原型，主页与设置流转已经做了多轮细化，重点状态如下：
+## 8. 如何打包 APK
 
-- 首页已区分 **Day / Night** 两种时间视图
-- 表盘中心只保留浅色时间提示：
-  - Day：`6:00-18:00`
-  - Night：`18:00-6:00`
-- 首页表盘下方改成了 **左右滑动双页**：
-  - 第 1 页：`Current Project / Next Project`
-  - 第 2 页：`Today timeline`
-- `SET` 不再直接进入录入表单，而是先进入中间过渡态
-- `Set Project` 负责进入项目录入表单
-- 已补上 `Delete Project` 入口和删除流程
-- `Set project` 页面已做紧凑布局，目的是尽量首屏看完主要内容
-- 时间选择器已经做过一轮吸附优化，但这一块仍然属于后续需要继续微调手感的区域
+### 8.1 打调试版 APK（最快）
 
-### 5. 你回家后最可能遇到的不是代码问题，而是环境问题
-如果回家打开项目后不能立刻运行，优先检查这几项：
+适合自己装机测试。
 
-1. **Android SDK 34 是否安装**
-2. **Android Studio 是否完成 Gradle Sync**
-3. **JDK 是否为 17 或 IDE 自带版本**
-4. **真机 USB 调试是否开启**
-5. **是否误删 / 缺失 Gradle wrapper 相关文件**
+**Android Studio 操作：**
 
-### 6. 已知说明
-- 当前仓库主分支已经推送到 GitHub：
-  - `https://github.com/ghostLLC/visible-time-manager`
-- 当前有一轮与首页布局、SetProject 表单、时间滚轮、删除项目流程相关的连续改动
-- 如果回家后要继续开发，建议**先直接运行看现状，再改 UI**，不要一上来先改依赖和版本
+1. 打开项目 `vtm`
+2. 顶部菜单选择：
+   - **Build > Build Bundle(s) / APK(s) > Build APK(s)**
+3. 等待构建完成
+4. 构建成功后，IDE 右下角会出现提示，点击 **locate** 即可找到 APK
 
-### 7. 建议的续接顺序
-回家后建议按这个顺序继续：
+通常输出路径类似：
 
-1. 先成功同步并运行项目
-2. 真机确认当前 Day / Night、双页切换、SetProject、Delete Project 流程是否正常
-3. 再继续微调时间滚轮吸附手感与 SetProject 空间布局
-4. 最后再考虑数据持久化（Room / ViewModel）之类的结构升级
+```text
+vtm/app/build/outputs/apk/debug/app-debug.apk
+```
 
+这个 APK：
+- 不需要你自己配签名
+- 适合真机直接安装测试
+- 不适合正式上架发布
+
+### 8.2 打正式可分发 APK（签名版）
+
+如果你想发给别人装，或者后面准备上架，就建议生成 **signed APK**。
+
+**Android Studio 操作：**
+
+1. 打开项目
+2. 选择：
+   - **Build > Generate Signed Bundle / APK...**
+3. 选择 **APK**
+4. 如果你还没有 keystore：
+   - 点击 **Create new...**
+   - 保存好 `.jks` 文件、alias、密码
+5. 选择 `release` 变体
+6. 完成构建
+
+通常输出路径类似：
+
+```text
+vtm/app/build/outputs/apk/release/app-release.apk
+```
+
+> 注意：`release` 签名信息非常重要，后续更新同一个应用必须继续使用同一套签名，别丢。
+
+### 8.3 你当前最建议的做法
+
+如果你现在只是想先把这版装到手机上看效果，**先打 debug APK 就够了**：
+
+- 操作最少
+- 不用先处理签名
+- 更适合当前这个还在持续迭代的阶段
+
+---
+
+## 9. GitHub 仓库
+
+仓库地址：
+
+```text
+https://github.com/ghostLLC/visible-time-manager
+```
+
+---
+
+## 10. 后续推荐迭代方向
+
+如果继续往产品化推进，建议下一阶段优先级如下：
+
+1. **接入本地持久化**（Room / DataStore / ViewModel）
+2. **补正式图标与资源体系**
+3. **整理发布版签名与版本号策略**
+4. **补充项目数据导入 / 导出能力**
+5. **增加提醒、到点通知、时间统计等功能**
+
+---
+
+## 11. 当前状态结论
+
+如果你现在打开仓库，应该把它理解成：
+
+> 一个已经完成核心交互跑通、视觉风格收敛、表盘体验基本稳定的 Compose Android 原型应用。
+
+它已经可以：
+- 展示 Day / Night 两个半天的时间安排
+- 在表盘上直观看项目分布
+- 新建、编辑、删除项目
+- 通过滚轮设置时间并做冲突校验
+- 通过点击或滑动切换模式
+- 作为下一阶段持久化与发布化的可靠基线继续往前做
