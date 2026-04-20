@@ -5,7 +5,19 @@ import androidx.compose.animation.AnimatedContent
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+
+
+
+import androidx.compose.runtime.movableContentOf
+
+
+
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -13,14 +25,26 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 
 
+
+
+
+
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+
+
 
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 
 
@@ -32,12 +56,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
+
+
+
+
+
+
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-
 import androidx.compose.foundation.layout.Box
+
+import androidx.compose.foundation.layout.aspectRatio
+
 
 
 
@@ -66,34 +102,51 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-
-
-
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
+
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+
+
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 
 
+
 import androidx.compose.ui.text.font.FontFamily
+
 
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -101,11 +154,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 
 
+
 import androidx.compose.ui.unit.dp
 
 import androidx.compose.ui.unit.sp
 
+import com.vtm.app.components.ClockModeTransitionStyle
 import com.vtm.app.components.ClockFace
+import com.vtm.app.components.ClockFaceRenderQuality
+
+
 import com.vtm.app.model.TimeTask
 import com.vtm.app.ui.theme.ClockBlue
 import com.vtm.app.ui.theme.ClockGreen
@@ -113,13 +171,17 @@ import com.vtm.app.ui.theme.ClockPurple
 import com.vtm.app.ui.theme.ClockRed
 import com.vtm.app.ui.theme.ClockTeal
 import com.vtm.app.ui.theme.ClockYellow
+import com.vtm.app.ui.theme.VTMTheme
+import java.time.Duration
 import java.time.LocalTime
+
 import java.time.format.DateTimeFormatter
 import kotlin.math.max
+import kotlin.math.roundToInt
+
 
 private enum class MainScreenMode {
     Normal,
-    Set,
     SetProject,
 }
 
@@ -147,15 +209,49 @@ private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:m
 
 private fun MainScreenMode.transitionLevel(): Int = when (this) {
     MainScreenMode.Normal -> 0
-    MainScreenMode.Set -> 1
-    MainScreenMode.SetProject -> 2
+    MainScreenMode.SetProject -> 1
+}
+
+@Composable
+private fun rememberMinuteClockTime(isActive: Boolean): LocalTime {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var now by remember { mutableStateOf(LocalTime.now().withSecond(0).withNano(0)) }
+
+    DisposableEffect(lifecycleOwner, isActive) {
+        if (!isActive) {
+            onDispose { }
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_START || event == Lifecycle.Event.ON_RESUME) {
+                    now = LocalTime.now().withSecond(0).withNano(0)
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+            }
+        }
+    }
+
+    LaunchedEffect(isActive) {
+        if (!isActive) return@LaunchedEffect
+
+        while (true) {
+            val current = LocalTime.now()
+            now = current.withSecond(0).withNano(0)
+            val nextMinute = now.plusMinutes(1)
+            val delayMillis = Duration.between(current, nextMinute).toMillis().coerceAtLeast(200L)
+            delay(delayMillis)
+        }
+    }
+
+    return now
 }
 
 
 
-
-
 private val supportQuotes = listOf(
+
     "Lost time is never found again. — Franklin",
     "Time stays long enough for those who use it. — Leonardo da Vinci",
     "The future depends on what you do today. — Gandhi",
@@ -245,7 +341,9 @@ fun MainScreen(
 
     isNightMode: Boolean,
     onNightModeChange: (Boolean) -> Unit,
+    startupWarmupActive: Boolean = false,
 ) {
+
     var screenMode by rememberSaveable { mutableStateOf(MainScreenMode.Normal) }
     var tasks by remember {
         mutableStateOf(
@@ -295,11 +393,9 @@ fun MainScreen(
     var taskPendingDelete by remember { mutableStateOf<TimeTask?>(null) }
     var showEditDialog by rememberSaveable { mutableStateOf(false) }
     var taskPendingEdit by remember { mutableStateOf<TimeTask?>(null) }
+    var showSetActionsExpanded by rememberSaveable { mutableStateOf(false) }
     var editingTaskId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val editingTask = remember(tasks, editingTaskId) {
-        tasks.firstOrNull { it.id == editingTaskId }
-    }
     val tasksExcludingEditing = remember(tasks, editingTaskId) {
         tasks.filterNot { it.id == editingTaskId }
     }
@@ -307,6 +403,7 @@ fun MainScreen(
 
 
     val draftStartTotalMinutes = draftStartHour * 60 + draftStartMinute
+
     val draftEndTotalMinutes = draftEndHour * 60 + draftEndMinute
     val earliestDraftEndTotalMinutes = (draftStartTotalMinutes + 1).coerceAtMost(23 * 60 + 59)
     val draftOverlapTask = remember(tasksExcludingEditing, draftStartTotalMinutes, draftEndTotalMinutes) {
@@ -326,9 +423,10 @@ fun MainScreen(
     }
 
 
-    val now = remember(tasks, isNightMode, screenMode, draftTitle, draftType, draftStartHour, draftStartMinute, draftEndHour, draftEndMinute) {
-        LocalTime.now()
-    }
+    val shouldRunMinuteTicker = screenMode == MainScreenMode.Normal
+    val now = rememberMinuteClockTime(isActive = shouldRunMinuteTicker)
+
+
     val sortedTasks = remember(tasks) { tasks.sortedBy { it.startTotalMinutes() } }
     val visibleTasks = remember(sortedTasks, isNightMode) {
         tasksForMode(sortedTasks, isNightMode)
@@ -336,22 +434,9 @@ fun MainScreen(
     val currentTask = remember(visibleTasks, now) {
         visibleTasks.firstOrNull { task -> isTaskActive(task, now) }
     }
-    val nextTask = remember(visibleTasks, currentTask, now) {
-        when {
-            visibleTasks.isEmpty() -> null
-            currentTask != null -> {
-                val currentIndex = visibleTasks.indexOfFirst { it.id == currentTask.id }
-                if (currentIndex >= 0 && currentIndex < visibleTasks.lastIndex) {
-                    visibleTasks[currentIndex + 1]
-                } else {
-                    visibleTasks.firstOrNull { it.id != currentTask.id }
-                }
-            }
-            else -> visibleTasks.minByOrNull { task -> minutesUntilTask(task, now) }
-        }
-    }
 
     val previewTasks = remember(
+
         sortedTasks,
         screenMode,
         editingTaskId,
@@ -401,14 +486,41 @@ fun MainScreen(
 
 
 
-    val primaryActionLabel = when (screenMode) {
+    val isWarmupPhase = startupWarmupActive && screenMode == MainScreenMode.Normal
+    var warmupStage by remember { mutableIntStateOf(0) }
+    val useSimplifiedNormalPreview = isWarmupPhase || warmupStage < 2
+    val enableFullPagerMotion = !startupWarmupActive && warmupStage >= 2
+    val enableRichSetButtonMotion = !startupWarmupActive && warmupStage >= 2
+    val shouldComposeTimelinePage = warmupStage >= 1 && (!startupWarmupActive || pagerState.currentPage > 0 || pagerState.targetPage > 0)
+    val shouldPrecomposeHiddenWarmup = startupWarmupActive || warmupStage < 3
+    val shouldPrecomposeClockFace = startupWarmupActive || warmupStage >= 1
+    val shouldPrecomposeTimelineWarmup = startupWarmupActive || warmupStage >= 1
+    val shouldPrecomposeModeControls = startupWarmupActive || warmupStage >= 2
+    val shouldPrecomposeTimePickerWarmup = startupWarmupActive || warmupStage >= 3
 
-        MainScreenMode.Normal -> "SET"
-        MainScreenMode.Set -> "Back"
-        MainScreenMode.SetProject -> "Back"
+    LaunchedEffect(startupWarmupActive, screenMode) {
+        if (!startupWarmupActive || screenMode != MainScreenMode.Normal) {
+            warmupStage = 3
+            return@LaunchedEffect
+        }
+        warmupStage = 0
+        withFrameNanos { }
+        warmupStage = 1
+        withFrameNanos { }
+        warmupStage = 2
+        withFrameNanos { }
+        warmupStage = 3
     }
 
-    val canHandleBack = showDeleteDialog || showEditDialog || typeMenuExpanded || screenMode != MainScreenMode.Normal
+
+
+
+
+
+    val canHandleBack = showDeleteDialog || showEditDialog || showSetActionsExpanded || typeMenuExpanded || screenMode == MainScreenMode.SetProject
+
+
+
 
     BackHandler(enabled = canHandleBack) {
         when {
@@ -422,16 +534,16 @@ fun MainScreen(
                 taskPendingEdit = null
             }
 
+            showSetActionsExpanded -> {
+                showSetActionsExpanded = false
+            }
+
             typeMenuExpanded -> {
                 typeMenuExpanded = false
             }
 
             screenMode == MainScreenMode.SetProject -> {
                 typeMenuExpanded = false
-                screenMode = MainScreenMode.Set
-            }
-
-            screenMode == MainScreenMode.Set -> {
                 screenMode = MainScreenMode.Normal
             }
         }
@@ -462,6 +574,7 @@ fun MainScreen(
         showEditDialog = false
         screenMode = MainScreenMode.SetProject
     }
+
 
     fun updateDraftStart(totalMinutes: Int) {
         val bounded = totalMinutes.coerceIn(0, 23 * 60 + 58)
@@ -498,315 +611,1044 @@ fun MainScreen(
         resetDraft()
     }
 
-    val colorScheme = MaterialTheme.colorScheme
     val primaryActionContainerColor = neutralFilledButtonContainerColor()
     val primaryActionContentColor = neutralFilledButtonContentColor()
+    val density = LocalDensity.current
+    val coinFlipCommitAngle = 52f
+    val coinFlipHalfTurnAngle = 104f
+    val coinFlipMaxAngle = 176f
+    val coinFlipOvershootAngle = 10f
+    val coinFlipReturnDurationMillis = 220
+    val coinFlipHalfTurnDurationMillis = 160
+    val coinFlipOvershootDurationMillis = 120
+    val coinFlipReboundDurationMillis = 140
+
+    var clockTransitionStyle by remember { mutableStateOf(com.vtm.app.components.ClockModeTransitionStyle.None) }
+    var clockPulseTriggerKey by remember { mutableIntStateOf(0) }
+    var coinFlipDragRotation by remember { mutableFloatStateOf(0f) }
+    var coinFlipBaseNightMode by remember { mutableStateOf(isNightMode) }
+    var coinFlipCommittedTargetNightMode by remember { mutableStateOf<Boolean?>(null) }
+    var coinFlipDirection by remember { mutableFloatStateOf(1f) }
+    var isCoinFlipSettling by remember { mutableStateOf(false) }
+    var isCoinFlipInteractionActive by remember { mutableStateOf(false) }
+    val coinFlipRotation = remember { Animatable(0f) }
+    val modeDragScope = rememberCoroutineScope()
+    val shouldEnableCoinFlip = false
+
+    val isClockFlipInFlight = isCoinFlipSettling || isCoinFlipInteractionActive
+    val effectiveDisplayNightMode = isNightMode
+
+    LaunchedEffect(isNightMode, isCoinFlipSettling) {
+        if (!isCoinFlipSettling && kotlin.math.abs(coinFlipDragRotation) <= 0.5f) {
+            coinFlipBaseNightMode = isNightMode
+        }
+    }
 
 
 
-    val swipeModeThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
+    @Composable
+    fun CoinFlipClock(
+        modifier: Modifier = Modifier,
+        displayNightMode: Boolean,
+    ) {
+        BoxWithConstraints(
+            modifier = modifier
+                .fillMaxWidth()
+                .pointerInput(shouldEnableCoinFlip, isCoinFlipSettling, isNightMode) {
+                    if (!shouldEnableCoinFlip || isCoinFlipSettling) return@pointerInput
+                    val dragWidth = size.width.toFloat().coerceAtLeast(1f)
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            clockTransitionStyle = ClockModeTransitionStyle.None
+                            coinFlipBaseNightMode = isNightMode
+                            coinFlipCommittedTargetNightMode = null
+                            coinFlipDragRotation = 0f
+                            isCoinFlipInteractionActive = true
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            val deltaRotation = (dragAmount / dragWidth) * 180f
+                            val nextRotation = (coinFlipDragRotation + deltaRotation)
+                                .coerceIn(-coinFlipMaxAngle, coinFlipMaxAngle)
+                            coinFlipDragRotation = nextRotation
+                            if (kotlin.math.abs(nextRotation) > 1f) {
+                                coinFlipDirection = if (nextRotation >= 0f) 1f else -1f
+                            }
+                            change.consume()
+                        },
+                        onDragEnd = {
+                            val finalRotation = coinFlipDragRotation
+                            val shouldCommit = kotlin.math.abs(finalRotation) >= coinFlipCommitAngle
+                            val targetDirection = when {
+                                kotlin.math.abs(finalRotation) > 0.5f -> if (finalRotation >= 0f) 1f else -1f
+                                else -> coinFlipDirection
+                            }
+                            isCoinFlipSettling = true
+                            modeDragScope.launch {
+                                coinFlipRotation.snapTo(finalRotation)
+                                if (shouldCommit) {
+                                    val targetNightMode = !coinFlipBaseNightMode
+                                    coinFlipCommittedTargetNightMode = targetNightMode
+                                    coinFlipDirection = targetDirection
+                                    coinFlipRotation.animateTo(
+                                        targetValue = targetDirection * coinFlipHalfTurnAngle,
+                                        animationSpec = tween(
+                                            durationMillis = coinFlipHalfTurnDurationMillis,
+                                            easing = FastOutSlowInEasing,
+                                        ),
+                                    )
+                                    onNightModeChange(targetNightMode)
+                                    coinFlipRotation.animateTo(
 
-    Scaffold(
 
 
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MaterialTheme.colorScheme.background,
-        bottomBar = {
-            Button(
-                onClick = {
-                    when (screenMode) {
-                        MainScreenMode.Normal -> screenMode = MainScreenMode.Set
-                        MainScreenMode.Set -> screenMode = MainScreenMode.Normal
-                        MainScreenMode.SetProject -> {
-                            typeMenuExpanded = false
-                            screenMode = MainScreenMode.Set
+                                        targetValue = targetDirection * (180f + coinFlipOvershootAngle),
+                                        animationSpec = tween(
+                                            durationMillis = coinFlipOvershootDurationMillis,
+                                            easing = LinearOutSlowInEasing,
+                                        ),
+                                    )
+                                    coinFlipRotation.animateTo(
+                                        targetValue = targetDirection * (180f - coinFlipOvershootAngle * 0.72f),
+                                        animationSpec = tween(
+                                            durationMillis = coinFlipReboundDurationMillis,
+                                            easing = FastOutSlowInEasing,
+                                        ),
+                                    )
+                                    coinFlipRotation.animateTo(
+                                        targetValue = targetDirection * 180f,
+                                        animationSpec = tween(
+                                            durationMillis = coinFlipReboundDurationMillis,
+                                            easing = FastOutSlowInEasing,
+                                        ),
+                                    )
+                                    coinFlipBaseNightMode = targetNightMode
+                                    clockTransitionStyle = ClockModeTransitionStyle.Pulse
+                                    clockPulseTriggerKey += 1
+                                } else {
+                                    coinFlipRotation.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = tween(
+                                            durationMillis = coinFlipReturnDurationMillis,
+                                            easing = FastOutSlowInEasing,
+                                        ),
+                                    )
+                                }
+                                coinFlipDragRotation = 0f
+                                coinFlipCommittedTargetNightMode = null
+                                coinFlipRotation.snapTo(0f)
+                                isCoinFlipSettling = false
+                                isCoinFlipInteractionActive = false
+                            }
+                        },
+                        onDragCancel = {
+                            coinFlipDragRotation = 0f
+                            coinFlipCommittedTargetNightMode = null
+                            isCoinFlipInteractionActive = false
+                        },
+                    )
+                },
+        ) {
+            val cameraDistancePx = with(density) { 132.dp.toPx() }
+            val activeCoinRotation = if (isCoinFlipSettling) {
+                coinFlipRotation.value
+            } else {
+                coinFlipDragRotation
+            }
+            val coinRotation = activeCoinRotation
+            val rotationRadians = Math.toRadians(coinRotation.toDouble())
+            val absSin = kotlin.math.abs(kotlin.math.sin(rotationRadians)).toFloat()
+            val absCos = kotlin.math.abs(kotlin.math.cos(rotationRadians)).toFloat()
+            val faceVisibility = (absCos * absCos * 1.08f).coerceIn(0f, 1f)
+            val frontAlpha = if (kotlin.math.abs(coinRotation) <= 90f) faceVisibility else 0f
+            val backAlpha = if (kotlin.math.abs(coinRotation) >= 90f) faceVisibility else 0f
+            val backFaceRotationY = if (coinRotation >= 0f) coinRotation - 180f else coinRotation + 180f
+            val faceScaleX = 0.992f - 0.03f * (1f - absCos)
+            val faceScaleY = 0.992f + 0.015f * absSin
+            val faceLift = with(density) { absSin * 8.dp.toPx() }
+            val frontNightMode = coinFlipBaseNightMode
+            val backNightMode = !coinFlipBaseNightMode
+            val coinThickness = with(density) { (8.dp + 14.dp * absSin).toPx() }
+            val rimAlpha = (0.22f + 0.54f * absSin).coerceIn(0f, 0.9f)
+            val rimStrokePx = coinThickness
+            val rimInsetPx = rimStrokePx / 2f + with(density) { 6.dp.toPx() }
+            val shadowWidthDp = with(density) { 104.dp + 18.dp * absSin }
+            val shadowHeightDp = with(density) { 7.dp + 3.dp * absSin }
+            val shadowAlpha = (0.07f + 0.08f * absSin).coerceAtMost(0.16f)
+            val shadowAnchorYPx = with(density) { 92.dp.toPx() }
+            val shadowScaleX = 0.92f + 0.06f * absSin
+            val shadowScaleY = 0.76f + 0.04f * absSin
+            val overlayAlphaMultiplier = if (isClockFlipInFlight) 1f else 0f
+            val edgeHighlightAlpha = (0.16f + 0.26f * absSin).coerceAtMost(0.38f) * overlayAlphaMultiplier
+
+            val frontShadeAlpha = (0.05f + 0.12f * absSin + 0.04f * ((coinRotation / 180f).coerceIn(-1f, 1f))).coerceIn(0f, 0.22f) * overlayAlphaMultiplier
+            val backShadeAlpha = (0.08f + 0.16f * absSin).coerceIn(0f, 0.26f) * overlayAlphaMultiplier
+            val colorTransitionProgress = when {
+                coinRotation >= 0f -> (coinRotation / coinFlipHalfTurnAngle).coerceIn(0f, 1f)
+                else -> 1f - ((-coinRotation) / coinFlipHalfTurnAngle).coerceIn(0f, 1f)
+            }
+            val shouldUseInteractiveColorTransition = isClockFlipInFlight || coinFlipCommittedTargetNightMode != null
+            val frontFaceTransitionProgress = if (shouldUseInteractiveColorTransition) {
+                colorTransitionProgress
+            } else {
+                null
+            }
+            val frontFaceTransitionStyle = if (shouldUseInteractiveColorTransition) {
+                ClockModeTransitionStyle.Morph
+            } else if (displayNightMode == isNightMode) {
+                clockTransitionStyle
+            } else {
+                ClockModeTransitionStyle.None
+            }
+            val frontFacePulseTriggerKey = if (shouldUseInteractiveColorTransition) {
+                0
+            } else if (displayNightMode == isNightMode) {
+                clockPulseTriggerKey
+            } else {
+                0
+            }
+            val frontFaceRenderQuality = if (isClockFlipInFlight) {
+                ClockFaceRenderQuality.Reduced
+            } else {
+                ClockFaceRenderQuality.Full
+            }
+            val frontFaceNightMode = if (shouldUseInteractiveColorTransition) {
+                colorTransitionProgress >= 0.5f
+            } else {
+                frontNightMode
+            }
+
+            val faceModifier = Modifier.fillMaxWidth().aspectRatio(1f)
+            val staticRimAlpha = if (displayNightMode) 0.12f else 0.07f
+            val rimBrightColor = Color.White.copy(alpha = edgeHighlightAlpha * 0.88f)
+            val rimSurfaceColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.98f)
+            val rimDarkColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
+            val rimStaticColor = MaterialTheme.colorScheme.onSurface.copy(alpha = staticRimAlpha)
+            val rimOutlineColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isClockFlipInFlight) 0.06f + edgeHighlightAlpha * 0.24f else staticRimAlpha * 0.7f)
+            val rimOutlineStrokePx = with(density) { 1.2.dp.toPx() }
+
+
+
+
+
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(shadowWidthDp)
+                        .height(shadowHeightDp)
+                        .graphicsLayer {
+                            alpha = shadowAlpha
+                            translationY = shadowAnchorYPx - faceLift * 0.18f
+                            scaleX = shadowScaleX
+                            scaleY = shadowScaleY
+                        }
+                        .background(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Black.copy(alpha = 0.14f),
+                                    Color.Black.copy(alpha = 0.08f),
+                                    Color.Transparent,
+                                ),
+                            ),
+                            shape = RoundedCornerShape(percent = 50),
+                        ),
+                )
+
+
+                Canvas(
+                    modifier = faceModifier
+                        .graphicsLayer {
+                            rotationY = coinRotation
+                            cameraDistance = cameraDistancePx
+                            alpha = rimAlpha
+                            translationY = -faceLift
+                            scaleX = faceScaleX
+                            scaleY = faceScaleY
+                        },
+                ) {
+
+                    val diameter = size.minDimension - rimInsetPx * 2f
+                    if (diameter > 0f) {
+                        if (isClockFlipInFlight) {
+                            drawArc(
+                                brush = Brush.sweepGradient(
+                                    colors = listOf(
+                                        rimBrightColor,
+                                        rimSurfaceColor,
+                                        rimDarkColor,
+                                        rimSurfaceColor,
+                                        rimBrightColor,
+                                    ),
+                                    center = center,
+                                ),
+                                startAngle = -90f,
+                                sweepAngle = 360f,
+                                useCenter = false,
+                                topLeft = Offset(rimInsetPx, rimInsetPx),
+                                size = Size(diameter, diameter),
+                                style = Stroke(width = rimStrokePx, cap = StrokeCap.Round),
+                            )
+                        } else {
+                            drawArc(
+                                color = rimStaticColor,
+                                startAngle = -90f,
+                                sweepAngle = 360f,
+                                useCenter = false,
+                                topLeft = Offset(rimInsetPx, rimInsetPx),
+                                size = Size(diameter, diameter),
+                                style = Stroke(width = rimStrokePx, cap = StrokeCap.Round),
+                            )
+                        }
+                        drawArc(
+                            color = rimOutlineColor,
+                            startAngle = -90f,
+                            sweepAngle = 360f,
+                            useCenter = false,
+                            topLeft = Offset(rimInsetPx, rimInsetPx),
+                            size = Size(diameter, diameter),
+                            style = Stroke(width = rimOutlineStrokePx, cap = StrokeCap.Round),
+                        )
+                    }
+
+                }
+
+                Box(
+                    modifier = faceModifier
+                        .graphicsLayer {
+                            rotationY = backFaceRotationY
+                            cameraDistance = cameraDistancePx
+                            alpha = backAlpha
+                            scaleX = faceScaleX
+                            scaleY = faceScaleY
+                            translationY = -faceLift
+                        },
+                ) {
+                    ClockFace(
+                        isNightMode = backNightMode,
+                        tasks = previewTasks,
+                        currentTime = now,
+                        modifier = Modifier.fillMaxSize(),
+                        modeTransitionStyle = ClockModeTransitionStyle.None,
+                        pulseTriggerKey = 0,
+                        renderQuality = ClockFaceRenderQuality.Reduced,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        Color.Black.copy(alpha = backShadeAlpha * 0.16f),
+                                        Color.Black.copy(alpha = backShadeAlpha),
+                                        Color.Transparent,
+                                    ),
+                                ),
+                                shape = CircleShape,
+                            ),
+                    )
+                }
+
+                Box(
+                    modifier = faceModifier
+                        .graphicsLayer {
+                            rotationY = coinRotation
+                            cameraDistance = cameraDistancePx
+                            alpha = frontAlpha
+                            scaleX = faceScaleX
+                            scaleY = faceScaleY
+                            translationY = -faceLift
+                        },
+                ) {
+                    ClockFace(
+                        isNightMode = frontFaceNightMode,
+                        tasks = previewTasks,
+                        currentTime = now,
+                        modifier = Modifier.fillMaxSize(),
+                        modeTransitionStyle = frontFaceTransitionStyle,
+                        pulseTriggerKey = frontFacePulseTriggerKey,
+                        renderQuality = frontFaceRenderQuality,
+                        externalTransitionProgress = frontFaceTransitionProgress,
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = edgeHighlightAlpha * 0.8f),
+                                        Color.Transparent,
+                                        Color.Black.copy(alpha = frontShadeAlpha),
+                                    ),
+                                ),
+                                shape = CircleShape,
+                            ),
+                    )
+                }
+            }
+
+        }
+    }
+
+
+
+
+    @Composable
+    fun ScreenScaffold(
+        displayNightMode: Boolean,
+        modifier: Modifier = Modifier,
+        useSimplifiedNormalPreview: Boolean = false,
+    ) {
+        VTMTheme(
+            darkTheme = displayNightMode,
+            applySystemBars = false,
+        ) {
+            val pageVisibleTasks = remember(sortedTasks, displayNightMode) {
+                tasksForMode(sortedTasks, displayNightMode)
+            }
+            val pageCurrentTask = remember(pageVisibleTasks, now) {
+                pageVisibleTasks.firstOrNull { task -> isTaskActive(task, now) }
+            }
+            val pageNextTask = remember(pageVisibleTasks, pageCurrentTask, now) {
+                when {
+                    pageVisibleTasks.isEmpty() -> null
+                    pageCurrentTask != null -> {
+                        val currentIndex = pageVisibleTasks.indexOfFirst { it.id == pageCurrentTask.id }
+                        if (currentIndex >= 0 && currentIndex < pageVisibleTasks.lastIndex) {
+                            pageVisibleTasks[currentIndex + 1]
+                        } else {
+                            pageVisibleTasks.firstOrNull { it.id != pageCurrentTask.id }
+                        }
+                    }
+                    else -> pageVisibleTasks.minByOrNull { task -> minutesUntilTask(task, now) }
+                }
+            }
+            val configuration = LocalConfiguration.current
+
+            val isCompactWidth = configuration.screenWidthDp < 380
+            val contentHorizontalPadding = if (isCompactWidth) 16.dp else 24.dp
+            val contentVerticalPadding = if (isCompactWidth) 16.dp else 20.dp
+            val primaryActionHorizontalPadding = if (isCompactWidth) 16.dp else 24.dp
+            val primarySectionSpacing = if (isCompactWidth) 20.dp else 30.dp
+            val shouldShowBottomPrimaryAction = screenMode == MainScreenMode.SetProject
+            val primaryActionLabel = if (editingTaskId != null) "Back to Home" else "Back"
+
+
+            Scaffold(
+                modifier = modifier.fillMaxSize(),
+                containerColor = MaterialTheme.colorScheme.background,
+                bottomBar = {
+                    if (shouldShowBottomPrimaryAction) {
+                        Button(
+                            onClick = {
+                                typeMenuExpanded = false
+                                screenMode = MainScreenMode.Normal
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = primaryActionHorizontalPadding, vertical = 16.dp),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                containerColor = primaryActionContainerColor,
+                                contentColor = primaryActionContentColor,
+                            ),
+                        ) {
+                            Text(
+                                text = primaryActionLabel,
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                     }
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-                shape = RoundedCornerShape(18.dp),
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = primaryActionContainerColor,
-                    contentColor = primaryActionContentColor,
-                ),
-            ) {
-                Text(
-                    text = primaryActionLabel,
-                    modifier = Modifier.padding(vertical = 6.dp),
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        },
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 24.dp, vertical = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            if (screenMode == MainScreenMode.Normal) {
+            ) { paddingValues ->
+
+
+
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                        .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(
-                        text = supportQuoteBody,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontStyle = FontStyle.Italic,
-                        fontFamily = FontFamily.Serif,
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    supportQuoteAuthor?.let { author ->
-
-                        Text(
-                            text = "— $author",
+                    if (screenMode == MainScreenMode.Normal) {
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            fontSize = 11.sp,
-                            lineHeight = 13.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                            textAlign = TextAlign.End,
-                            fontStyle = FontStyle.Italic,
-                            fontFamily = FontFamily.Serif,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = supportQuoteBody,
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                                textAlign = TextAlign.Center,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                fontStyle = FontStyle.Italic,
+                                fontFamily = FontFamily.Serif,
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            supportQuoteAuthor?.let { author ->
+                                Text(
+                                    text = "— $author",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    fontSize = 11.sp,
+                                    lineHeight = 13.sp,
+                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                                    textAlign = TextAlign.End,
+                                    fontStyle = FontStyle.Italic,
+                                    fontFamily = FontFamily.Serif,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
 
-                Spacer(modifier = Modifier.height(18.dp))
-            } else {
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-
-            ClockFace(
-                isNightMode = isNightMode,
-                tasks = previewTasks,
-                centerTitle = "",
-                centerSubtitle = "",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pointerInput(isNightMode, swipeModeThresholdPx) {
-                        var accumulatedHorizontalDrag = 0f
-                        detectHorizontalDragGestures(
-                            onDragStart = {
-                                accumulatedHorizontalDrag = 0f
-                            },
-                            onHorizontalDrag = { change, dragAmount ->
-                                accumulatedHorizontalDrag += dragAmount
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                when {
-                                    accumulatedHorizontalDrag <= -swipeModeThresholdPx && !isNightMode -> onNightModeChange(true)
-                                    accumulatedHorizontalDrag >= swipeModeThresholdPx && isNightMode -> onNightModeChange(false)
-                                }
-                            },
-                            onDragCancel = {
-                                accumulatedHorizontalDrag = 0f
-                            },
-                        )
-                    },
-            )
-
-
-
-            Spacer(modifier = Modifier.height(30.dp))
-
-
-            if (screenMode != MainScreenMode.SetProject) {
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ModeToggleRow(
-                        isNightMode = isNightMode,
-                        onNightModeChange = onNightModeChange,
-                    )
-
-                    if (screenMode == MainScreenMode.Normal && visibleTasks.isNotEmpty()) {
-                        PagerIndicatorRow(
-                            currentPage = pagerState.currentPage,
-                            pageCount = 2,
-                        )
+                        Spacer(modifier = Modifier.height(18.dp))
                     } else {
-                        Spacer(modifier = Modifier.width(1.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                     }
-                }
 
-                Spacer(modifier = Modifier.height(14.dp))
-            }
-
-            AnimatedContent(
-                targetState = screenMode,
-                transitionSpec = {
-                    val movingForward = targetState.transitionLevel() > initialState.transitionLevel()
-                    val duration = 320
-                    (slideInHorizontally(
-                        animationSpec = tween(durationMillis = duration),
-                        initialOffsetX = { fullWidth -> if (movingForward) fullWidth / 5 else -fullWidth / 5 },
-                    ) + fadeIn(animationSpec = tween(durationMillis = duration))) togetherWith
-                        (slideOutHorizontally(
-                            animationSpec = tween(durationMillis = duration),
-                            targetOffsetX = { fullWidth -> if (movingForward) -fullWidth / 6 else fullWidth / 6 },
-                        ) + fadeOut(animationSpec = tween(durationMillis = duration))) using
-                        SizeTransform(clip = false)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = true),
-                label = "screen-mode-content",
-            ) { animatedScreenMode ->
-                when (animatedScreenMode) {
-                    MainScreenMode.Normal -> {
-                        HorizontalPager(
-                            state = pagerState,
+                    if (useSimplifiedNormalPreview && screenMode == MainScreenMode.Normal) {
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            userScrollEnabled = visibleTasks.isNotEmpty(),
-                            verticalAlignment = Alignment.Top,
-                        ) { page ->
-                            when (page) {
-                                0 -> {
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            ProjectSummaryCard(
+                                sectionTitle = if (pageCurrentTask == null) "No Project Currently" else "Current Project",
+                                task = pageCurrentTask,
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            ProjectSummaryCard(
+                                sectionTitle = if (pageNextTask == null) "No Next Project" else "Next Project",
+                                task = pageNextTask,
+                            )
+                        }
+                    } else {
+                        CoinFlipClock(
+                            modifier = Modifier.fillMaxWidth(),
+                            displayNightMode = displayNightMode,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(primarySectionSpacing))
+
+
+                    if (screenMode != MainScreenMode.SetProject) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ModeToggleRow(
+                                isNightMode = displayNightMode,
+                                onNightModeChange = { targetNightMode ->
+                                    if (targetNightMode == isNightMode) return@ModeToggleRow
+                                    clockTransitionStyle = ClockModeTransitionStyle.Morph
+                                    clockPulseTriggerKey += 1
+                                    onNightModeChange(targetNightMode)
+                                },
+                            )
+
+                            if (!useSimplifiedNormalPreview && screenMode == MainScreenMode.Normal) {
+                                PagerIndicatorRow(
+                                    currentPage = pagerState.currentPage,
+                                    pageCount = 2,
+                                    modifier = Modifier.padding(start = 12.dp),
+                                )
+                            } else {
+                                Spacer(modifier = Modifier.width(1.dp))
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+                    }
+
+
+
+                    if (useSimplifiedNormalPreview && screenMode == MainScreenMode.Normal) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = true),
+                            verticalArrangement = Arrangement.Top,
+                        ) {
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Button(
+                                onClick = { showSetActionsExpanded = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(18.dp),
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                    containerColor = primaryActionContainerColor,
+                                    contentColor = primaryActionContentColor,
+                                ),
+                            ) {
+                                Text(
+                                    text = "SET",
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    } else {
+                        AnimatedContent(
+                            targetState = screenMode,
+                            transitionSpec = {
+                                val movingForward = targetState.transitionLevel() > initialState.transitionLevel()
+                                val duration = 320
+                                (slideInHorizontally(
+                                    animationSpec = tween(durationMillis = duration),
+                                    initialOffsetX = { fullWidth -> if (movingForward) fullWidth / 5 else -fullWidth / 5 },
+                                ) + fadeIn(animationSpec = tween(durationMillis = duration))) togetherWith
+                                    (slideOutHorizontally(
+                                        animationSpec = tween(durationMillis = duration),
+                                        targetOffsetX = { fullWidth -> if (movingForward) -fullWidth / 6 else fullWidth / 6 },
+                                    ) + fadeOut(animationSpec = tween(durationMillis = duration))) using
+                                    SizeTransform(clip = false)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = true),
+                            label = "screen-mode-content",
+                        ) { animatedScreenMode ->
+                            when (animatedScreenMode) {
+                                MainScreenMode.Normal -> {
+                                    HorizontalPager(
+                                        state = pagerState,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        userScrollEnabled = pageVisibleTasks.isNotEmpty() && !isClockFlipInFlight,
+                                        verticalAlignment = Alignment.Top,
+                                    ) { page ->
+                                        val pageOffset = kotlin.math.abs(
+                                            (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction,
+                                        ).coerceIn(0f, 1f)
+                                        val direction = if (page >= pagerState.currentPage) 1f else -1f
+                                        val animatedTranslationX by animateFloatAsState(
+                                            targetValue = if (enableFullPagerMotion) interpolateFloat(0f, 112f, pageOffset) else 0f,
+                                            animationSpec = spring(
+                                                dampingRatio = 0.72f,
+                                                stiffness = 280f,
+                                            ),
+                                            label = "pager-translation-x",
+                                        )
+                                        val animatedScale by animateFloatAsState(
+                                            targetValue = if (enableFullPagerMotion) interpolateFloat(1f, 0.88f, pageOffset) else 1f,
+                                            animationSpec = spring(
+                                                dampingRatio = 0.74f,
+                                                stiffness = 250f,
+                                            ),
+                                            label = "pager-scale",
+                                        )
+                                        val animatedAlpha by animateFloatAsState(
+                                            targetValue = if (enableFullPagerMotion) interpolateFloat(1f, 0.56f, pageOffset) else 1f,
+                                            animationSpec = spring(
+                                                dampingRatio = 0.86f,
+                                                stiffness = 320f,
+                                            ),
+                                            label = "pager-alpha",
+                                        )
+                                        val animatedRotationY by animateFloatAsState(
+                                            targetValue = if (enableFullPagerMotion) interpolateFloat(0f, 7.5f, pageOffset) * direction else 0f,
+                                            animationSpec = spring(
+                                                dampingRatio = 0.78f,
+                                                stiffness = 260f,
+                                            ),
+                                            label = "pager-rotation-y",
+                                        )
+                                        val animatedScaleY by animateFloatAsState(
+                                            targetValue = if (enableFullPagerMotion) interpolateFloat(1f, 0.94f, pageOffset) else 1f,
+                                            animationSpec = spring(
+                                                dampingRatio = 0.8f,
+                                                stiffness = 240f,
+                                            ),
+                                            label = "pager-scale-y",
+                                        )
+
+                                        val pageMotionModifier = Modifier.graphicsLayer {
+                                            translationX = animatedTranslationX * direction
+                                            scaleX = animatedScale
+                                            scaleY = animatedScaleY
+                                            alpha = animatedAlpha
+                                            rotationY = animatedRotationY
+                                            cameraDistance = 18.dp.toPx()
+                                        }
+
+
+
+                                        when (page) {
+                                            0 -> {
+                                                Column(
+                                                    modifier = pageMotionModifier
+                                                        .fillMaxWidth()
+                                                        .fillMaxSize(),
+                                                ) {
+                                                    ProjectSummaryCard(
+                                                        sectionTitle = if (pageCurrentTask == null) "No Project Currently" else "Current Project",
+                                                        task = pageCurrentTask,
+                                                    )
+
+                                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                                    ProjectSummaryCard(
+                                                        sectionTitle = if (pageNextTask == null) "No Next Project" else "Next Project",
+                                                        task = pageNextTask,
+                                                    )
+
+                                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                                    AnimatedContent(
+                                                        targetState = showSetActionsExpanded,
+                                                        transitionSpec = {
+                                                            (fadeIn(animationSpec = tween(durationMillis = 210, delayMillis = 40)) +
+                                                                slideInHorizontally(
+                                                                    animationSpec = tween(durationMillis = 260),
+                                                                    initialOffsetX = { fullWidth -> fullWidth / 14 },
+                                                                )) togetherWith
+                                                                (fadeOut(animationSpec = tween(durationMillis = 140)) +
+                                                                    slideOutHorizontally(
+                                                                        animationSpec = tween(durationMillis = 180),
+                                                                        targetOffsetX = { fullWidth -> -fullWidth / 16 },
+                                                                    ))
+                                                        },
+                                                        label = "set-inline-actions",
+
+                                                    ) { isExpanded ->
+                                                        if (isExpanded) {
+                                                            SetInlineActionsRow(
+                                                                hasTasks = tasks.isNotEmpty(),
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                onNewProject = {
+                                                                    resetDraft()
+                                                                    screenMode = MainScreenMode.SetProject
+                                                                },
+                                                                onEditProject = {
+                                                                    taskPendingEdit = null
+                                                                    showEditDialog = true
+                                                                },
+                                                                onDeleteProject = {
+                                                                    taskPendingDelete = null
+                                                                    showDeleteDialog = true
+                                                                },
+                                                            )
+
+                                                        } else {
+                                                            val setButtonScale by animateFloatAsState(
+                                                                targetValue = if (enableRichSetButtonMotion && showSetActionsExpanded) 0.92f else 1f,
+                                                                animationSpec = spring(
+                                                                    dampingRatio = 0.76f,
+                                                                    stiffness = 520f,
+                                                                ),
+                                                                label = "set-trigger-scale",
+                                                            )
+                                                            val setButtonAlpha by animateFloatAsState(
+                                                                targetValue = if (enableRichSetButtonMotion && showSetActionsExpanded) 0.84f else 1f,
+                                                                animationSpec = tween(durationMillis = 150),
+                                                                label = "set-trigger-alpha",
+                                                            )
+
+
+                                                            Button(
+                                                                onClick = { showSetActionsExpanded = true },
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .graphicsLayer {
+                                                                        scaleX = setButtonScale
+                                                                        scaleY = setButtonScale
+                                                                        alpha = setButtonAlpha
+                                                                    },
+                                                                shape = RoundedCornerShape(18.dp),
+                                                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                                                                    containerColor = primaryActionContainerColor,
+                                                                    contentColor = primaryActionContentColor,
+                                                                ),
+                                                            ) {
+                                                                Text(
+                                                                    text = "SET",
+                                                                    modifier = Modifier.padding(vertical = 6.dp),
+                                                                    fontWeight = FontWeight.SemiBold,
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+
+                                                }
+                                            }
+
+
+                                            else -> {
+                                                Box(
+                                                    modifier = pageMotionModifier
+                                                        .fillMaxWidth()
+                                                        .fillMaxSize(),
+                                                    contentAlignment = Alignment.TopStart,
+                                                ) {
+                                                    if (shouldComposeTimelinePage) {
+                                                        TimelinePreview(
+                                                            tasks = sortedTasks,
+                                                            modifier = Modifier.fillMaxSize(),
+                                                        )
+                                                    } else {
+                                                        Column(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .padding(top = 6.dp),
+                                                            verticalArrangement = Arrangement.Top,
+                                                        ) {
+                                                            OutlinedCard(
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                shape = RoundedCornerShape(24.dp),
+                                                                colors = CardDefaults.outlinedCardColors(
+                                                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f),
+                                                                ),
+                                                                border = BorderStroke(
+                                                                    width = 1.dp,
+                                                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f),
+                                                                ),
+                                                            ) {
+                                                                Column(
+                                                                    modifier = Modifier
+                                                                        .fillMaxWidth()
+                                                                        .padding(horizontal = 18.dp, vertical = 22.dp),
+                                                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                                                ) {
+                                                                    Text(
+                                                                        text = "Today timeline",
+                                                                        style = MaterialTheme.typography.titleMedium,
+                                                                        fontWeight = FontWeight.SemiBold,
+                                                                    )
+                                                                    Text(
+                                                                        text = "Will finish preparing when you slide here for the first time.",
+                                                                        style = MaterialTheme.typography.bodyMedium,
+                                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                        }
+                                    }
+
+                                }
+
+
+                                MainScreenMode.SetProject -> {
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .fillMaxSize(),
+                                            .verticalScroll(rememberScrollState()),
                                     ) {
-                                        ProjectSummaryCard(
-                                            sectionTitle = if (currentTask == null) "No Project Currently" else "Current Project",
-                                            task = currentTask,
+                                        DraftProjectCard(
+                                            isEditing = editingTaskId != null,
+                                            title = draftTitle,
+                                            onTitleChange = { onTitleChange -> draftTitle = onTitleChange },
+                                            selectedType = draftType,
+                                            onToggleTypeMenu = { typeMenuExpanded = !typeMenuExpanded },
+                                            typeMenuExpanded = typeMenuExpanded,
+                                            onSelectType = {
+                                                draftType = it
+                                                typeMenuExpanded = false
+                                            },
+                                            startHour = draftStartHour,
+                                            startMinute = draftStartMinute,
+                                            endHour = draftEndHour,
+                                            endMinute = draftEndMinute,
+                                            earliestEndTotalMinutes = earliestDraftEndTotalMinutes,
+                                            occupiedStartTimes = unavailableStartTimes(tasksExcludingEditing),
+                                            occupiedEndTimes = unavailableEndTimes(tasksExcludingEditing, earliestDraftEndTotalMinutes),
+                                            draftColor = previewDraftColor(draftType),
+                                            timeError = draftTimeError,
+                                            onSelectStartTime = { updateDraftStart(it) },
+                                            onSelectEndTime = { updateDraftEnd(it) },
+                                            onSave = { saveDraft() },
                                         )
-
-                                        Spacer(modifier = Modifier.height(10.dp))
-
-                                        ProjectSummaryCard(
-                                            sectionTitle = if (nextTask == null) "No Next Project" else "Next Project",
-                                            task = nextTask,
-                                        )
-                                    }
-                                }
-
-                                else -> {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .fillMaxSize(),
-                                        contentAlignment = Alignment.TopStart,
-                                    ) {
-                                        TimelinePreview(
-                                            tasks = sortedTasks,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-
                                     }
                                 }
                             }
                         }
                     }
-
-                    MainScreenMode.Set -> {
-                        SetStageCard(
-                            hasTasks = tasks.isNotEmpty(),
-                            onNewProject = {
-                                resetDraft()
-                                screenMode = MainScreenMode.SetProject
-                            },
-                            onEditProject = {
-                                taskPendingEdit = null
-                                showEditDialog = true
-                            },
-                            onDeleteProject = {
-                                taskPendingDelete = null
-                                showDeleteDialog = true
-                            },
-                        )
-                    }
-
-                    MainScreenMode.SetProject -> {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            DraftProjectCard(
-                                isEditing = editingTaskId != null,
-                                title = draftTitle,
-                                onTitleChange = { onTitleChange -> draftTitle = onTitleChange },
-                                selectedType = draftType,
-                                onToggleTypeMenu = { typeMenuExpanded = !typeMenuExpanded },
-                                typeMenuExpanded = typeMenuExpanded,
-                                onSelectType = {
-                                    draftType = it
-                                    typeMenuExpanded = false
-                                },
-                                startHour = draftStartHour,
-                                startMinute = draftStartMinute,
-                                endHour = draftEndHour,
-                                endMinute = draftEndMinute,
-                                earliestEndTotalMinutes = earliestDraftEndTotalMinutes,
-                                occupiedStartTimes = unavailableStartTimes(tasksExcludingEditing),
-                                occupiedEndTimes = unavailableEndTimes(tasksExcludingEditing, earliestDraftEndTotalMinutes),
-                                draftColor = previewDraftColor(draftType),
-                                timeError = draftTimeError,
-                                onSelectStartTime = { updateDraftStart(it) },
-                                onSelectEndTime = { updateDraftEnd(it) },
-                                onSave = { saveDraft() },
-                            )
-                        }
-                    }
                 }
-            }
-
-            if (showDeleteDialog) {
-                DeleteProjectDialog(
-                    tasks = sortedTasks,
-                    pendingDelete = taskPendingDelete,
-                    onSelectTask = { taskPendingDelete = it },
-                    onDismiss = {
-                        showDeleteDialog = false
-                        taskPendingDelete = null
-                    },
-                    onConfirmDelete = {
-                        val deletingId = taskPendingDelete?.id
-                        if (deletingId != null) {
-                            tasks = tasks.filterNot { it.id == deletingId }
-                        }
-                        showDeleteDialog = false
-                        taskPendingDelete = null
-                        screenMode = MainScreenMode.Set
-                    },
-                )
-            }
-            if (showEditDialog) {
-                EditProjectDialog(
-                    tasks = sortedTasks,
-                    pendingEdit = taskPendingEdit,
-                    onSelectTask = { taskPendingEdit = it },
-                    onDismiss = {
-                        showEditDialog = false
-                        taskPendingEdit = null
-                    },
-                    onConfirmEdit = {
-                        taskPendingEdit?.let { beginEditing(it) }
-                    },
-                )
             }
         }
     }
 
 
+    Box(modifier = Modifier.fillMaxSize()) {
+        ScreenScaffold(
+            displayNightMode = isNightMode,
+            modifier = Modifier.fillMaxSize(),
+            useSimplifiedNormalPreview = useSimplifiedNormalPreview,
+        )
+
+        if (shouldPrecomposeHiddenWarmup && screenMode == MainScreenMode.Normal) {
+            HiddenWarmupPrecompose(
+                shouldPrecomposeClockFace = shouldPrecomposeClockFace,
+                shouldPrecomposeTimeline = shouldPrecomposeTimelineWarmup,
+                shouldPrecomposeModeControls = shouldPrecomposeModeControls,
+                shouldPrecomposeTimePicker = shouldPrecomposeTimePickerWarmup,
+                previewTasks = previewTasks,
+                timelineTasks = sortedTasks,
+                now = now,
+                displayNightMode = isNightMode,
+                hasTasks = tasks.isNotEmpty(),
+                selectedHour = draftStartHour,
+                selectedMinute = draftStartMinute,
+                minSelectableTotalMinutes = earliestDraftEndTotalMinutes,
+                occupiedTimes = unavailableEndTimes(tasksExcludingEditing, earliestDraftEndTotalMinutes),
+            )
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    if (showDeleteDialog) {
+        DeleteProjectDialog(
+            tasks = sortedTasks,
+            pendingDelete = taskPendingDelete,
+            onSelectTask = { taskPendingDelete = it },
+            onDismiss = {
+                showDeleteDialog = false
+                taskPendingDelete = null
+            },
+            onConfirmDelete = {
+                val deletingId = taskPendingDelete?.id
+                if (deletingId != null) {
+                    tasks = tasks.filterNot { it.id == deletingId }
+                }
+                showDeleteDialog = false
+                taskPendingDelete = null
+                screenMode = MainScreenMode.Normal
+            },
+        )
+    }
+    if (showEditDialog) {
+        EditProjectDialog(
+            tasks = sortedTasks,
+            pendingEdit = taskPendingEdit,
+            onSelectTask = { taskPendingEdit = it },
+            onDismiss = {
+                showEditDialog = false
+                taskPendingEdit = null
+            },
+            onConfirmEdit = {
+                taskPendingEdit?.let { beginEditing(it) }
+            },
+        )
+    }
+
+
+
 }
 
 
+
+
+
+
+
+@Composable
+private fun HiddenWarmupPrecompose(
+    shouldPrecomposeClockFace: Boolean,
+    shouldPrecomposeTimeline: Boolean,
+    shouldPrecomposeModeControls: Boolean,
+    shouldPrecomposeTimePicker: Boolean,
+    previewTasks: List<TimeTask>,
+    timelineTasks: List<TimeTask>,
+    now: LocalTime,
+    displayNightMode: Boolean,
+    hasTasks: Boolean,
+    selectedHour: Int,
+    selectedMinute: Int,
+    minSelectableTotalMinutes: Int,
+    occupiedTimes: Set<Int>,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                alpha = 0f
+                scaleX = 0.98f
+                scaleY = 0.98f
+                translationX = -10000f
+                translationY = -10000f
+            },
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            if (shouldPrecomposeClockFace) {
+                ClockFace(
+                    isNightMode = displayNightMode,
+                    tasks = previewTasks,
+                    currentTime = now,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f),
+                    modeTransitionStyle = ClockModeTransitionStyle.None,
+                    pulseTriggerKey = 0,
+                    renderQuality = ClockFaceRenderQuality.Reduced,
+                )
+            }
+
+            if (shouldPrecomposeTimeline) {
+                TimelinePreview(
+                    tasks = timelineTasks,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                )
+            }
+
+            if (shouldPrecomposeModeControls) {
+                ModeToggleRow(
+                    isNightMode = displayNightMode,
+                    onNightModeChange = {},
+                )
+                PagerIndicatorRow(
+                    currentPage = 0,
+                    pageCount = 2,
+                )
+                SetInlineActionsRow(
+                    hasTasks = hasTasks,
+                    modifier = Modifier.fillMaxWidth(),
+                    onNewProject = {},
+                    onEditProject = {},
+                    onDeleteProject = {},
+                )
+            }
+
+            if (shouldPrecomposeTimePicker) {
+                SnapTimePicker(
+                    selectedHour = selectedHour,
+                    selectedMinute = selectedMinute,
+                    minTotalMinutes = minSelectableTotalMinutes,
+                    occupiedTimes = occupiedTimes,
+                    isDarkMode = displayNightMode,
+                    onHourSelected = {},
+                    onMinuteSelected = {},
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun EditProjectDialog(
@@ -1040,6 +1882,8 @@ private fun ModeToggleRow(
 ) {
     Row(
         modifier = Modifier
+            .widthIn(min = 132.dp, max = 156.dp)
+            .wrapContentWidth(Alignment.Start)
             .background(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f),
                 shape = RoundedCornerShape(15.dp),
@@ -1067,67 +1911,73 @@ private fun ModeToggleRow(
 
 @Composable
 private fun CompactModeChip(
+    modifier: Modifier = Modifier,
     text: String,
     timeRange: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    Button(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 9.dp, vertical = 5.dp),
-        elevation = androidx.compose.material3.ButtonDefaults.buttonElevation(
-            defaultElevation = if (selected) 2.dp else 0.dp,
-            pressedElevation = if (selected) 3.dp else 0.dp,
-            focusedElevation = if (selected) 2.dp else 0.dp,
-            hoveredElevation = if (selected) 2.dp else 0.dp,
-        ),
-        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.surface
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
-            },
-            contentColor = if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-        ),
-        border = BorderStroke(
-            1.dp,
-            if (selected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.62f)
-            } else {
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)
-            },
-        ),
-    ) {
-        Column(
-            modifier = Modifier.width(54.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(0.dp),
-        ) {
-            Text(
-                text = text,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.76f),
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
-                fontSize = 14.sp,
-            )
+    val interactionSource = remember { MutableInteractionSource() }
+    val containerColor = if (selected) {
+        MaterialTheme.colorScheme.surface
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.14f)
+    }
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val borderColor = if (selected) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.62f)
+    } else {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)
+    }
 
-            Text(
-                text = timeRange,
-                color = if (selected) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.30f)
-                },
-                fontWeight = FontWeight.Medium,
-                fontSize = 8.sp,
+    Column(
+        modifier = modifier
+            .border(
+                width = 1.dp,
+                color = borderColor,
+                shape = RoundedCornerShape(12.dp),
             )
-        }
+            .background(
+                color = containerColor,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 9.dp, vertical = 5.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        Text(
+            text = text,
+            color = if (selected) contentColor else contentColor.copy(alpha = 0.76f),
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+            fontSize = 14.sp,
+        )
+
+        Text(
+            text = timeRange,
+            color = if (selected) {
+                contentColor.copy(alpha = 0.42f)
+            } else {
+                contentColor.copy(alpha = 0.30f)
+            },
+            fontWeight = FontWeight.Medium,
+            fontSize = 8.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
+
+
+
 
 
 
@@ -1594,9 +2444,9 @@ private fun WheelColumn(
 
 
 @Composable
-private fun SetStageCard(
-
+private fun SetInlineActionsRow(
     hasTasks: Boolean,
+    modifier: Modifier = Modifier,
     onNewProject: () -> Unit,
     onEditProject: () -> Unit,
     onDeleteProject: () -> Unit,
@@ -1604,80 +2454,147 @@ private fun SetStageCard(
     val outlinedContainerColor = neutralOutlinedButtonContainerColor()
     val outlinedContentColor = neutralOutlinedButtonContentColor()
     val outlinedBorderColor = neutralOutlinedBorderColor()
+    val helperTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
 
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+    val centerScale by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = spring(
+            dampingRatio = 0.72f,
+            stiffness = 520f,
+        ),
+        label = "set-actions-center-scale",
+    )
+    val sideScale by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = spring(
+            dampingRatio = 0.76f,
+            stiffness = 460f,
+        ),
+        label = "set-actions-side-scale",
+    )
+    val sideAlpha by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 200, delayMillis = 50),
+        label = "set-actions-side-alpha",
+    )
+    val centerAlpha by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(durationMillis = 180),
+        label = "set-actions-center-alpha",
+    )
+
+    Column(
+        modifier = modifier.wrapContentHeight(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .height(56.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "Shape your visible plan",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
+            SetActionSegmentButton(
+                text = "New",
+                enabled = true,
+                shape = RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp, topEnd = 8.dp, bottomEnd = 8.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .graphicsLayer {
+                        translationX = -18f
+                        scaleX = sideScale
+                        scaleY = sideScale
+                        alpha = sideAlpha
+                    },
+                containerColor = outlinedContainerColor,
+                contentColor = outlinedContentColor,
+                borderColor = outlinedBorderColor,
+                onClick = onNewProject,
             )
-            Spacer(modifier = Modifier.height(14.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                OutlinedButton(
-                    onClick = onNewProject,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        containerColor = outlinedContainerColor,
-                        contentColor = outlinedContentColor,
-                    ),
-                    border = BorderStroke(1.dp, outlinedBorderColor),
-                ) {
-                    Text("New")
-                }
-                OutlinedButton(
-                    onClick = onEditProject,
-                    enabled = hasTasks,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        containerColor = outlinedContainerColor,
-                        contentColor = outlinedContentColor,
-                    ),
-                    border = BorderStroke(1.dp, outlinedBorderColor),
-                ) {
-                    Text("Edit")
-                }
-                OutlinedButton(
-                    onClick = onDeleteProject,
-                    enabled = hasTasks,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                        containerColor = outlinedContainerColor,
-                        contentColor = outlinedContentColor,
-                    ),
-                    border = BorderStroke(1.dp, outlinedBorderColor),
-                ) {
-                    Text("Delete")
-                }
-            }
-            if (!hasTasks) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "No saved projects yet.",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    fontSize = 12.sp,
-                )
-            }
+
+            SetActionSegmentButton(
+                text = "Edit",
+                enabled = hasTasks,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .offset(x = (-1).dp)
+                    .graphicsLayer {
+                        scaleX = centerScale
+                        scaleY = centerScale
+                        alpha = centerAlpha
+                    },
+                containerColor = outlinedContainerColor,
+                contentColor = outlinedContentColor,
+                borderColor = outlinedBorderColor,
+                onClick = onEditProject,
+            )
+
+            SetActionSegmentButton(
+                text = "Delete",
+                enabled = hasTasks,
+                shape = RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp, topEnd = 18.dp, bottomEnd = 18.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .offset(x = (-2).dp)
+                    .graphicsLayer {
+                        translationX = 18f
+                        scaleX = sideScale
+                        scaleY = sideScale
+                        alpha = sideAlpha
+                    },
+                containerColor = outlinedContainerColor,
+                contentColor = outlinedContentColor,
+                borderColor = outlinedBorderColor,
+                onClick = onDeleteProject,
+            )
+        }
+
+        if (!hasTasks) {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "No saved projects yet.",
+                color = helperTextColor,
+                fontSize = 12.sp,
+            )
         }
     }
 }
+
+@Composable
+private fun SetActionSegmentButton(
+    text: String,
+    enabled: Boolean,
+    shape: RoundedCornerShape,
+    modifier: Modifier = Modifier,
+    containerColor: Color,
+    contentColor: Color,
+    borderColor: Color,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = shape,
+        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+            containerColor = containerColor,
+            contentColor = contentColor,
+            disabledContainerColor = containerColor.copy(alpha = 0.42f),
+            disabledContentColor = contentColor.copy(alpha = 0.45f),
+        ),
+        border = BorderStroke(1.dp, if (enabled) borderColor else borderColor.copy(alpha = 0.35f)),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+    ) {
+        Text(
+            text = text,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(vertical = 14.dp),
+        )
+    }
+}
+
+
 
 
 
@@ -1687,21 +2604,27 @@ private fun SetStageCard(
 private fun PagerIndicatorRow(
     currentPage: Int,
     pageCount: Int,
+    modifier: Modifier = Modifier,
 ) {
-    val activeIndicatorColor = neutralFilledButtonContainerColor()
-    val inactiveIndicatorColor = neutralFilledButtonContainerColor().copy(alpha = 0.72f)
+    val activeIndicatorColor = MaterialTheme.colorScheme.primary
+    val inactiveIndicatorColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
+
 
     Row(
+        modifier = modifier,
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         repeat(pageCount) { index ->
+            val isCurrentPage = index == currentPage
+            val indicatorSize = if (isCurrentPage) 10.dp else 7.dp
+
             Box(
                 modifier = Modifier
-                    .width(8.dp)
-                    .height(8.dp)
+                    .width(indicatorSize)
+                    .height(indicatorSize)
                     .background(
-                        if (index == currentPage) activeIndicatorColor else inactiveIndicatorColor,
+                        if (isCurrentPage) activeIndicatorColor else inactiveIndicatorColor,
                         CircleShape,
                     ),
             )
@@ -1710,7 +2633,9 @@ private fun PagerIndicatorRow(
             }
         }
     }
+
 }
+
 
 
 
@@ -1752,10 +2677,11 @@ private fun ProjectSummaryCard(
                     },
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+
             }
             if (task != null) {
                 Text(
@@ -1871,9 +2797,9 @@ private fun SnapWheelColumn(
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
-            .filter { scrolling -> !scrolling }
-            .debounce(72)
-            .collectLatest {
+            .collectLatest { scrolling ->
+                if (scrolling) return@collectLatest
+                delay(72)
                 if (latestValues.isEmpty() || listState.isScrollInProgress) return@collectLatest
 
                 val centeredIndex = currentCenteredIndex() ?: return@collectLatest
@@ -1889,6 +2815,7 @@ private fun SnapWheelColumn(
                 }
             }
     }
+
 
     Column(modifier = modifier) {
         Text(
@@ -2232,7 +3159,13 @@ private fun remainingMinutes(task: TimeTask, now: LocalTime): Int {
     return end - adjustedNow
 }
 
+private fun interpolateFloat(start: Float, end: Float, fraction: Float): Float {
+    val clampedFraction = fraction.coerceIn(0f, 1f)
+    return start + (end - start) * clampedFraction
+}
+
 private fun isTaskActive(task: TimeTask, now: LocalTime): Boolean {
+
     val start = task.startTotalMinutes()
     val end = task.normalizedEndTotalMinutes()
     val nowValue = nowMinute(now)
@@ -2259,7 +3192,6 @@ private fun screenHeadline(
 ): String {
     return when (screenMode) {
         MainScreenMode.Normal -> if (isNightMode) "Manage your night" else "Manage your day"
-        MainScreenMode.Set -> "Shape the visible plan"
         MainScreenMode.SetProject -> if (isEditing) "Edit your project" else "Set your project"
     }
 }
@@ -2271,7 +3203,6 @@ private fun screenSupportText(
 ): String {
     return when (screenMode) {
         MainScreenMode.Normal -> supportQuote
-        MainScreenMode.Set -> "Choose the next project slot."
         MainScreenMode.SetProject -> if (isEditing) "Update title, type, and time." else "Set title, type, and time."
     }
 }

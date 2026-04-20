@@ -12,12 +12,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
@@ -35,15 +40,39 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
+enum class ClockModeTransitionStyle {
+    Morph,
+    Pulse,
+    None,
+}
+
+enum class ClockFaceRenderQuality {
+    Full,
+    Reduced,
+}
+
+
+
 @Composable
 fun ClockFace(
     isNightMode: Boolean,
     tasks: List<TimeTask>,
-    centerTitle: String,
-    centerSubtitle: String,
+    currentTime: LocalTime,
     modifier: Modifier = Modifier,
+    modeTransitionStyle: ClockModeTransitionStyle = ClockModeTransitionStyle.Morph,
+    pulseTriggerKey: Int = 0,
+    renderQuality: ClockFaceRenderQuality = ClockFaceRenderQuality.Full,
+    externalTransitionProgress: Float? = null,
 ) {
-    val transitionProgress by animateFloatAsState(
+    val cachedTaskSegments = remember(tasks) {
+        tasks.associateWith { task ->
+            mapOf(
+                ClockWindow.Day to segmentsForWindow(task, ClockWindow.Day),
+                ClockWindow.Night to segmentsForWindow(task, ClockWindow.Night),
+            )
+        }
+    }
+    val morphProgress by animateFloatAsState(
         targetValue = if (isNightMode) 1f else 0f,
         animationSpec = spring(
             dampingRatio = 0.78f,
@@ -51,10 +80,51 @@ fun ClockFace(
         ),
         label = "clock-mode-progress",
     )
+    val pulseTargetState = remember { mutableFloatStateOf(0f) }
+    val pulseProgress by animateFloatAsState(
+        targetValue = pulseTargetState.floatValue,
+        animationSpec = spring(
+            dampingRatio = 0.44f,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "clock-mode-pulse",
+    )
+    LaunchedEffect(modeTransitionStyle, pulseTriggerKey) {
+        if (modeTransitionStyle == ClockModeTransitionStyle.Pulse) {
+            pulseTargetState.floatValue = 1f
+            withFrameNanos { }
+            pulseTargetState.floatValue = 0f
+        } else {
+            pulseTargetState.floatValue = 0f
+        }
+    }
+    val transitionProgress = when {
+        externalTransitionProgress != null -> externalTransitionProgress.coerceIn(0f, 1f)
+        modeTransitionStyle == ClockModeTransitionStyle.Morph -> morphProgress
+        else -> if (isNightMode) 1f else 0f
+    }
     val clampedProgress = transitionProgress.coerceIn(0f, 1f)
-    val overshootLift = (transitionProgress - clampedProgress) * 0.9f
-    val pulse = sin((clampedProgress * Math.PI).toFloat())
-    val sweepDrift = (overshootLift + pulse * 0.12f) * 8f
+    val overshootLift = if (modeTransitionStyle == ClockModeTransitionStyle.Morph && externalTransitionProgress == null) {
+        (transitionProgress - clampedProgress) * 0.9f
+    } else {
+        0f
+    }
+    val pulse = when (modeTransitionStyle) {
+        ClockModeTransitionStyle.Morph -> {
+            if (externalTransitionProgress != null) {
+                sin((clampedProgress * Math.PI).toFloat()) * 0.2f
+            } else {
+                sin((clampedProgress * Math.PI).toFloat())
+            }
+        }
+        ClockModeTransitionStyle.Pulse -> sin((pulseProgress.coerceIn(0f, 1f) * Math.PI).toFloat()) * 0.72f
+        ClockModeTransitionStyle.None -> 0f
+    }
+    val sweepDrift = if (modeTransitionStyle == ClockModeTransitionStyle.Morph) {
+        (overshootLift + pulse * 0.12f) * 8f
+    } else {
+        0f
+    }
 
     val circleColor = lerp(ClockCircleLight, ClockCircleDark, clampedProgress)
     val colorScheme = MaterialTheme.colorScheme
@@ -72,7 +142,6 @@ fun ClockFace(
     val hourLabelColor = lerp(controlFillColor, colorScheme.onSurface, if (isDarkMode) 0.54f else 0.46f)
     val hourTickColor = lerp(controlOutlineColor, colorScheme.onSurface, if (isDarkMode) 0.18f else 0.12f)
     val handColor = lerp(controlFillColor, colorScheme.onSurface, if (isDarkMode) 0.72f else 0.64f)
-    val currentTime = LocalTime.now()
 
     Box(
         modifier = modifier
@@ -166,15 +235,15 @@ fun ClockFace(
             val nightOuterWeight = (clampedProgress - overshootLift * 0.35f).coerceIn(0f, 1.15f)
             val nightInnerWeight = (1f - clampedProgress + overshootLift * 0.65f).coerceIn(0f, 1.15f)
 
-            tasks.forEach { task ->
+            cachedTaskSegments.forEach { (task, segmentsByWindow) ->
                 val dayOuterAlpha = (0.72f * dayOuterWeight + 0.12f * pulse).coerceAtLeast(0f)
                 val dayInnerAlpha = (0.56f * dayInnerWeight + 0.08f * pulse).coerceAtLeast(0f)
                 val nightOuterAlpha = (0.78f * nightOuterWeight + 0.12f * pulse).coerceAtLeast(0f)
                 val nightInnerAlpha = (0.62f * nightInnerWeight + 0.08f * pulse).coerceAtLeast(0f)
 
                 drawWindowSegments(
-                    task = task,
-                    window = ClockWindow.Day,
+                    segments = segmentsByWindow.getValue(ClockWindow.Day),
+                    color = task.color,
                     topLeft = outerTopLeft,
                     size = outerSize,
                     strokeWidth = primaryStroke,
@@ -182,10 +251,11 @@ fun ClockFace(
                     alpha = dayOuterAlpha,
                     startAngleShift = -sweepDrift,
                     pinOuterEdge = false,
+                    renderQuality = renderQuality,
                 )
                 drawWindowSegments(
-                    task = task,
-                    window = ClockWindow.Day,
+                    segments = segmentsByWindow.getValue(ClockWindow.Day),
+                    color = task.color,
                     topLeft = secondaryTopLeft,
                     size = secondarySize,
                     strokeWidth = secondaryStroke,
@@ -193,10 +263,11 @@ fun ClockFace(
                     alpha = dayInnerAlpha,
                     startAngleShift = sweepDrift * 0.55f,
                     pinOuterEdge = true,
+                    renderQuality = renderQuality,
                 )
                 drawWindowSegments(
-                    task = task,
-                    window = ClockWindow.Night,
+                    segments = segmentsByWindow.getValue(ClockWindow.Night),
+                    color = task.color,
                     topLeft = outerTopLeft,
                     size = outerSize,
                     strokeWidth = primaryStroke,
@@ -204,10 +275,11 @@ fun ClockFace(
                     alpha = nightOuterAlpha,
                     startAngleShift = sweepDrift,
                     pinOuterEdge = false,
+                    renderQuality = renderQuality,
                 )
                 drawWindowSegments(
-                    task = task,
-                    window = ClockWindow.Night,
+                    segments = segmentsByWindow.getValue(ClockWindow.Night),
+                    color = task.color,
                     topLeft = secondaryTopLeft,
                     size = secondarySize,
                     strokeWidth = secondaryStroke,
@@ -215,6 +287,7 @@ fun ClockFace(
                     alpha = nightInnerAlpha,
                     startAngleShift = -sweepDrift * 0.55f,
                     pinOuterEdge = true,
+                    renderQuality = renderQuality,
                 )
             }
 
@@ -261,8 +334,8 @@ private data class ClockSegment(
 )
 
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWindowSegments(
-    task: TimeTask,
-    window: ClockWindow,
+    segments: List<ClockSegment>,
+    color: Color,
     topLeft: Offset,
     size: Size,
     strokeWidth: Float,
@@ -270,16 +343,17 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWindowSegments(
     alpha: Float,
     startAngleShift: Float,
     pinOuterEdge: Boolean,
+    renderQuality: ClockFaceRenderQuality,
 ) {
-    if (alpha <= 0.01f) return
+    if (alpha <= 0.01f || segments.isEmpty()) return
 
-    val baseColor = task.color.copy(alpha = alpha.coerceIn(0f, 1f))
+    val baseColor = color.copy(alpha = alpha.coerceIn(0f, 1f))
     val baseRadius = size.width / 2f
     val center = Offset(topLeft.x + baseRadius, topLeft.y + baseRadius)
-    val taperAngle = 18f
-    val minStrokeWidth = strokeWidth * 0.58f
+    val taperAngle = if (renderQuality == ClockFaceRenderQuality.Full) 18f else 10f
+    val minStrokeWidth = strokeWidth * if (renderQuality == ClockFaceRenderQuality.Full) 0.58f else 0.72f
 
-    segmentsForWindow(task, window).forEach { segment ->
+    segments.forEach { segment ->
         val rawSweepAngle = segment.sweepFraction * 360f
         val minSweep = if (strokeWidth > 20f) 6f else 4f
         val adjustedSweepAngle = (rawSweepAngle - capAngleOffset).coerceAtLeast(minSweep)
@@ -289,7 +363,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWindowSegments(
         val endTaperAngle = if (segment.touchesWindowEnd) min(taperAngle, adjustedSweepAngle * 0.36f) else 0f
         val middleSweep = adjustedSweepAngle - startTaperAngle - endTaperAngle
 
-        if (startTaperAngle > 0.2f) {
+        if (renderQuality == ClockFaceRenderQuality.Full && startTaperAngle > 0.2f) {
             drawPinnedTaperArc(
                 color = baseColor,
                 center = center,
@@ -306,8 +380,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWindowSegments(
         if (middleSweep > 0.2f) {
             drawArc(
                 color = baseColor,
-                startAngle = adjustedStartAngle + startTaperAngle,
-                sweepAngle = middleSweep,
+                startAngle = adjustedStartAngle + if (renderQuality == ClockFaceRenderQuality.Full) startTaperAngle else 0f,
+                sweepAngle = middleSweep.coerceAtLeast(0.2f),
                 useCenter = false,
                 topLeft = topLeft,
                 size = size,
@@ -315,7 +389,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawWindowSegments(
             )
         }
 
-        if (endTaperAngle > 0.2f) {
+        if (renderQuality == ClockFaceRenderQuality.Full && endTaperAngle > 0.2f) {
             drawPinnedTaperArc(
                 color = baseColor,
                 center = center,
@@ -342,34 +416,47 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawPinnedTaperArc(
     pinOuterEdge: Boolean,
     growsFromBoundary: Boolean,
 ) {
-    val sliceCount = max(64, (sweepAngle / 0.24f).toInt())
-    val sliceSweep = sweepAngle / sliceCount
+    val sampleCount = max(14, (sweepAngle / 1.1f).toInt())
     val outerEdgeRadius = baseRadius + baseStrokeWidth / 2f
     val innerEdgeRadius = baseRadius - baseStrokeWidth / 2f
+    val outerBoundary = ArrayList<Offset>(sampleCount + 1)
+    val innerBoundary = ArrayList<Offset>(sampleCount + 1)
 
-    repeat(sliceCount) { index ->
-        val progress = (index + 0.5f) / sliceCount.toFloat()
+    repeat(sampleCount + 1) { index ->
+        val progress = index / sampleCount.toFloat()
         val boundaryProgress = if (growsFromBoundary) progress else 1f - progress
         val easedProgress = boundaryProgress * boundaryProgress * boundaryProgress
         val currentStrokeWidth = lerpFloat(minStrokeWidth, baseStrokeWidth, easedProgress)
-        val currentRadius = if (pinOuterEdge) {
-            outerEdgeRadius - currentStrokeWidth / 2f
+        val currentOuterRadius = if (pinOuterEdge) {
+            outerEdgeRadius
         } else {
-            innerEdgeRadius + currentStrokeWidth / 2f
+            innerEdgeRadius + currentStrokeWidth
         }
-        val currentTopLeft = Offset(center.x - currentRadius, center.y - currentRadius)
-        val currentSize = Size(currentRadius * 2, currentRadius * 2)
-
-        drawArc(
-            color = color,
-            startAngle = startAngle + sliceSweep * index,
-            sweepAngle = sliceSweep,
-            useCenter = false,
-            topLeft = currentTopLeft,
-            size = currentSize,
-            style = Stroke(width = currentStrokeWidth, cap = StrokeCap.Butt),
-        )
+        val currentInnerRadius = if (pinOuterEdge) {
+            outerEdgeRadius - currentStrokeWidth
+        } else {
+            innerEdgeRadius
+        }
+        val angle = startAngle + sweepAngle * progress
+        outerBoundary += pointOnCircle(center = center, radius = currentOuterRadius, angleDegrees = angle)
+        innerBoundary += pointOnCircle(center = center, radius = currentInnerRadius, angleDegrees = angle)
     }
+
+    val taperPath = Path().apply {
+        moveTo(outerBoundary.first().x, outerBoundary.first().y)
+        outerBoundary.drop(1).forEach { point ->
+            lineTo(point.x, point.y)
+        }
+        innerBoundary.asReversed().forEach { point ->
+            lineTo(point.x, point.y)
+        }
+        close()
+    }
+
+    drawPath(
+        path = taperPath,
+        color = color,
+    )
 }
 
 
@@ -407,6 +494,15 @@ private fun segmentsForWindow(task: TimeTask, window: ClockWindow): List<ClockSe
 }
 
 
+
 private fun lerpFloat(start: Float, stop: Float, fraction: Float): Float {
     return start + (stop - start) * fraction.coerceIn(0f, 1f)
+}
+
+private fun pointOnCircle(center: Offset, radius: Float, angleDegrees: Float): Offset {
+    val radians = Math.toRadians(angleDegrees.toDouble())
+    return Offset(
+        x = center.x + cos(radians).toFloat() * radius,
+        y = center.y + sin(radians).toFloat() * radius,
+    )
 }

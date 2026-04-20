@@ -37,12 +37,13 @@ private val LightColorScheme = lightColorScheme(
 @Composable
 fun VTMTheme(
     darkTheme: Boolean,
+    applySystemBars: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
     val view = LocalView.current
 
-    if (!view.isInEditMode) {
+    if (applySystemBars && !view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
             window.statusBarColor = colorScheme.background.toArgb()
