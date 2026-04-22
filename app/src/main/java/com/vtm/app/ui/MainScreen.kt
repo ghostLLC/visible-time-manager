@@ -105,10 +105,9 @@ import androidx.compose.material3.AlertDialog
 
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -148,6 +147,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
+
 
 
 import androidx.compose.ui.graphics.graphicsLayer
@@ -200,7 +201,6 @@ private enum class MainScreenMode {
     SetProject,
 }
 
-private val taskTypeOptions = listOf("Study", "Work", "Exercise", "Life", "Break")
 private val taskColorPalette = listOf(
     ClockBlue,
     ClockPurple,
@@ -212,13 +212,6 @@ private val taskColorPalette = listOf(
     Color(0xFF8B5CF6),
     Color(0xFFF97316),
     Color(0xFF14B8A6),
-)
-private val taskTypeColors = mapOf(
-    "Study" to ClockBlue,
-    "Work" to ClockPurple,
-    "Exercise" to ClockGreen,
-    "Life" to ClockYellow,
-    "Break" to ClockTeal,
 )
 private enum class BottomNavPage {
     Calendar,
@@ -400,32 +393,29 @@ fun MainScreen(
                 TimeTask(
                     id = "day-deep-work",
                     title = "Deep Work Block",
-                    type = "Work",
                     startHour = 10,
                     startMinute = 0,
                     endHour = 14,
                     endMinute = 0,
-                    color = taskTypeColors.getValue("Work"),
+                    color = ClockPurple,
                 ),
                 TimeTask(
                     id = "evening-study",
                     title = "Evening Study Sprint",
-                    type = "Study",
                     startHour = 16,
                     startMinute = 0,
                     endHour = 19,
                     endMinute = 0,
-                    color = taskTypeColors.getValue("Study"),
+                    color = ClockBlue,
                 ),
                 TimeTask(
                     id = "night-reset",
                     title = "Night Reset Session",
-                    type = "Exercise",
                     startHour = 4,
                     startMinute = 0,
                     endHour = 9,
                     endMinute = 0,
-                    color = taskTypeColors.getValue("Exercise"),
+                    color = ClockGreen,
                 ),
             ),
         )
@@ -434,9 +424,9 @@ fun MainScreen(
 
 
     var draftTitle by rememberSaveable { mutableStateOf("") }
-    var draftType by rememberSaveable { mutableStateOf(taskTypeOptions.first()) }
-    var typeMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    var draftColorArgb by rememberSaveable { mutableIntStateOf(taskColorPalette.first().toArgb()) }
     var draftStartHour by rememberSaveable { mutableStateOf(8) }
+
     var draftStartMinute by rememberSaveable { mutableStateOf(0) }
     var draftEndHour by rememberSaveable { mutableStateOf(9) }
     var draftEndMinute by rememberSaveable { mutableStateOf(0) }
@@ -501,7 +491,7 @@ fun MainScreen(
         screenMode,
         editingTaskId,
         draftTitle,
-        draftType,
+        draftColorArgb,
         draftStartHour,
         draftStartMinute,
         draftEndHour,
@@ -511,21 +501,22 @@ fun MainScreen(
         if (screenMode != MainScreenMode.SetProject || draftTimeError != null) {
             sortedTasks
         } else {
+            val draftColor = Color(draftColorArgb)
             val draftPreviewTask = TimeTask(
                 id = editingTaskId ?: "draft-preview",
                 title = draftTitle.ifBlank {
-                    if (editingTaskId != null) "Edited ${draftType} Project" else "New ${draftType} Project"
+                    if (editingTaskId != null) "Edit project" else "New project"
                 },
-                type = draftType,
                 startHour = draftStartHour,
                 startMinute = draftStartMinute,
                 endHour = draftEndHour,
                 endMinute = draftEndMinute,
-                color = taskTypeColor(draftType),
+                color = draftColor,
             )
             (tasksExcludingEditing + draftPreviewTask).sortedBy { it.startTotalMinutes() }
         }
     }
+
 
 
 
@@ -606,15 +597,15 @@ fun MainScreen(
         showSetActionsExpanded = false
         editingTaskId = task.id
         draftTitle = task.title
-        draftType = task.type
+        draftColorArgb = task.color.toArgb()
         draftStartHour = task.startHour
         draftStartMinute = task.startMinute
         draftEndHour = task.endHour
         draftEndMinute = task.endMinute
-        typeMenuExpanded = false
         taskPendingEdit = null
         showEditDialog = false
         screenMode = MainScreenMode.SetProject
+
     }
 
     fun pinClockTaskPeak(task: TimeTask) {
@@ -631,19 +622,20 @@ fun MainScreen(
         editingTaskId = null
         selectedClockEmptySlot = null
         draftTitle = ""
-        draftType = taskTypeOptions.first()
+        draftColorArgb = taskColorPalette.first().toArgb()
         draftStartHour = if (isNightMode) 19 else 8
         draftStartMinute = 0
         draftEndHour = if (isNightMode) 20 else 9
         draftEndMinute = 0
-        typeMenuExpanded = false
     }
 
+
+
     fun returnToClockHome() {
-        typeMenuExpanded = false
         showSetActionsExpanded = false
         showEditDialog = false
         taskPendingEdit = null
+
         taskPendingDelete = null
         showDeleteDialog = false
         clearClockTaskPeakState(clearSelection = true)
@@ -652,7 +644,9 @@ fun MainScreen(
         resetDraft()
     }
 
-    val canHandleBack = showDeleteDialog || showEditDialog || showSetActionsExpanded || typeMenuExpanded || screenMode == MainScreenMode.SetProject
+    val canHandleBack = showDeleteDialog || showEditDialog || showSetActionsExpanded || screenMode == MainScreenMode.SetProject
+
+
 
 
 
@@ -676,13 +670,10 @@ fun MainScreen(
                 showSetActionsExpanded = false
             }
 
-            typeMenuExpanded -> {
-                typeMenuExpanded = false
-            }
-
             screenMode == MainScreenMode.SetProject -> {
                 returnToClockHome()
             }
+
 
         }
     }
@@ -714,18 +705,19 @@ fun MainScreen(
         showSetActionsExpanded = false
         editingTaskId = null
         draftTitle = ""
-        draftType = taskTypeOptions.first()
+        draftColorArgb = nextAvailableTaskColor(tasksExcludingEditing, taskColorPalette.first()).toArgb()
         val boundedStart = slot.startTotalMinutes.coerceIn(0, 30 * 60 - 1)
         val boundedEnd = slot.endTotalMinutes.coerceIn(boundedStart + 1, 30 * 60)
         applyDraftRange(
             startTotalMinutes = boundedStart,
             endTotalMinutes = boundedEnd,
         )
-        typeMenuExpanded = false
         taskPendingEdit = null
+
         showEditDialog = false
         screenMode = MainScreenMode.SetProject
     }
+
 
 
 
@@ -769,16 +761,16 @@ fun MainScreen(
     fun saveDraft() {
 
         if (draftTimeError != null) return
-        val title = draftTitle.ifBlank { "New ${draftType} Project" }
+        val draftColor = Color(draftColorArgb)
+        val title = draftTitle.ifBlank { "New project" }
         val savedTask = TimeTask(
             id = editingTaskId ?: "task-${System.currentTimeMillis()}",
             title = title,
-            type = draftType,
             startHour = draftStartHour,
             startMinute = draftStartMinute,
             endHour = draftEndHour,
             endMinute = draftEndMinute,
-            color = taskTypeColor(draftType),
+            color = draftColor,
         )
         tasks = (tasksExcludingEditing + savedTask).sortedBy { it.startTotalMinutes() }
         selectedClockTaskId = savedTask.id
@@ -789,6 +781,7 @@ fun MainScreen(
         screenMode = MainScreenMode.Normal
         resetDraft()
     }
+
 
 
 
@@ -1397,18 +1390,27 @@ fun MainScreen(
                     }
 
                     if (screenMode == MainScreenMode.Normal && activeBottomPage != BottomNavPage.Clock) {
-                        PlaceholderFeaturePage(
-                            title = if (activeBottomPage == BottomNavPage.Calendar) "Calendar" else "Mine",
-                            subtitle = if (activeBottomPage == BottomNavPage.Calendar) {
-                                "Calendar page is reserved for now. We can fill in schedule and date capabilities later."
-                            } else {
-                                "Mine page is reserved for now. We can place profile and personal settings here later."
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f, fill = true),
-                        )
+                        when (activeBottomPage) {
+                            BottomNavPage.Calendar -> {
+                                CalendarReservedPage(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f, fill = true),
+                                )
+                            }
+
+                            BottomNavPage.Profile -> {
+                                MineReservedPage(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f, fill = true),
+                                )
+                            }
+
+                            BottomNavPage.Clock -> Unit
+                        }
                     } else {
+
                         if (useSimplifiedNormalPreview && screenMode == MainScreenMode.Normal) {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1690,12 +1692,9 @@ fun MainScreen(
                                                 isEditing = editingTaskId != null,
                                                 title = draftTitle,
                                                 onTitleChange = { onTitleChange -> draftTitle = onTitleChange },
-                                                selectedType = draftType,
-                                                onToggleTypeMenu = { typeMenuExpanded = !typeMenuExpanded },
-                                                typeMenuExpanded = typeMenuExpanded,
-                                                onSelectType = {
-                                                    draftType = it
-                                                    typeMenuExpanded = false
+                                                selectedColor = Color(draftColorArgb),
+                                                onSelectColor = {
+                                                    draftColorArgb = it.toArgb()
                                                 },
                                                 startHour = draftStartHour,
                                                 startMinute = draftStartMinute,
@@ -1704,7 +1703,7 @@ fun MainScreen(
                                                 earliestEndTotalMinutes = earliestDraftEndTotalMinutes,
                                                 occupiedStartTimes = unavailableStartTimes(tasksExcludingEditing),
                                                 occupiedEndTimes = unavailableEndTimes(tasksExcludingEditing, earliestDraftEndTotalMinutes),
-                                                draftColor = previewDraftColor(draftType),
+                                                draftColor = Color(draftColorArgb),
                                                 timeError = draftTimeError,
                                                 onSelectStartTime = { updateDraftStart(it) },
                                                 onSelectEndTime = { updateDraftEnd(it) },
@@ -2005,7 +2004,7 @@ private fun EditProjectDialog(
                                             .background(task.color, CircleShape),
                                     )
                                     Text(
-                                        text = "${iconForType(task.type)} ${task.title}",
+                                        text = task.title,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
@@ -2013,7 +2012,7 @@ private fun EditProjectDialog(
                                     )
                                 }
                                 Text(
-                                    text = "${task.type} · ${task.prettyTimeRange()}",
+                                    text = task.prettyTimeRange(),
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
                                     fontSize = 12.sp,
                                 )
@@ -2035,19 +2034,10 @@ private fun EditProjectDialog(
                 Text("Edit")
             }
         },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
-                    contentColor = outlinedContentColor,
-                ),
-            ) {
-                Text("Cancel")
-            }
-        },
         shape = RoundedCornerShape(24.dp),
     )
 }
+
 
 
 
@@ -2117,7 +2107,7 @@ private fun DeleteProjectDialog(
                                             .background(task.color, CircleShape),
                                     )
                                     Text(
-                                        text = "${iconForType(task.type)} ${task.title}",
+                                        text = task.title,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
@@ -2280,15 +2270,14 @@ private fun CompactModeChip(
 
 
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DraftProjectCard(
     isEditing: Boolean,
     title: String,
     onTitleChange: (String) -> Unit,
-    selectedType: String,
-    onToggleTypeMenu: () -> Unit,
-    typeMenuExpanded: Boolean,
-    onSelectType: (String) -> Unit,
+    selectedColor: Color,
+    onSelectColor: (Color) -> Unit,
     startHour: Int,
     startMinute: Int,
     endHour: Int,
@@ -2313,80 +2302,36 @@ private fun DraftProjectCard(
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+            Text(
+                text = "Color",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
+                taskColorPalette.forEach { optionColor ->
+                    val isSelected = optionColor == selectedColor
                     Box(
                         modifier = Modifier
-                            .width(12.dp)
-                            .height(12.dp)
-                            .background(draftColor, CircleShape),
-                    )
-                    Text(
-                        text = if (isEditing) "Edit project" else "Set project",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp,
-                    )
-                }
-
-                Box {
-                    OutlinedButton(
-                        onClick = onToggleTypeMenu,
-                        shape = RoundedCornerShape(16.dp),
-                        border = BorderStroke(1.dp, draftColor.copy(alpha = 0.35f)),
-                        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                            containerColor = draftColor.copy(alpha = 0.08f),
-                            contentColor = draftColor,
-                        ),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .width(10.dp)
-                                    .height(10.dp)
-                                    .background(draftColor, CircleShape),
-                            )
-                            Text(
-                                text = "Type · $selectedType",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = draftColor,
-                            )
-                        }
-                    }
-                    DropdownMenu(
-                        expanded = typeMenuExpanded,
-                        onDismissRequest = { if (typeMenuExpanded) onToggleTypeMenu() },
-                    ) {
-                        taskTypeOptions.forEach { option ->
-                            val optionColor = taskTypeColor(option)
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(10.dp)
-                                                .height(10.dp)
-                                                .background(optionColor, CircleShape),
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(option)
-                                    }
+                            .width(28.dp)
+                            .height(28.dp)
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
+                                } else {
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
                                 },
-                                onClick = { onSelectType(option) },
+                                shape = CircleShape,
                             )
-                        }
-                    }
+                            .background(optionColor, CircleShape)
+                            .clickable { onSelectColor(optionColor) },
+                    )
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -2442,6 +2387,7 @@ private fun DraftProjectCard(
         }
     }
 }
+
 
 
 @Composable
@@ -2661,7 +2607,96 @@ private fun CompactTimePickerDialog(
 
 
 @Composable
-private fun WheelColumn(
+private fun CalendarReservedPage(
+    modifier: Modifier = Modifier,
+) {
+    ReservedRootPage(
+        title = "Calendar",
+        subtitle = "Calendar page is reserved for now. We can fill in schedule and date capabilities later.",
+        sectionLabel = "Reserved area",
+        slots = listOf(
+            "顶部标题与日期筛选区",
+            "月历 / 周视图主体内容区",
+            "底部日程列表或统计扩展区",
+        ),
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun MineReservedPage(
+    modifier: Modifier = Modifier,
+) {
+    ReservedRootPage(
+        title = "Mine",
+        subtitle = "Mine page is reserved for now. We can place profile and personal settings here later.",
+        sectionLabel = "Reserved area",
+        slots = listOf(
+            "个人信息头部区",
+            "设置与偏好入口区",
+            "其他账号 / 数据管理扩展区",
+        ),
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ReservedRootPage(
+    title: String,
+    subtitle: String,
+    sectionLabel: String,
+    slots: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        PlaceholderFeaturePage(
+            title = title,
+            subtitle = subtitle,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Text(
+            text = sectionLabel,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+        )
+
+        slots.forEachIndexed { index, slot ->
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.outlinedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = "Slot ${index + 1}",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.54f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = slot,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+
     label: String,
     values: List<Int>,
     selectedValue: Int,
@@ -3043,7 +3078,7 @@ private fun ProjectSummaryCard(
                         .background((task?.color ?: MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)), CircleShape),
                 )
                 Text(
-                    text = if (task == null) sectionTitle else "$sectionTitle: ${iconForType(task.type)} ${task.title}",
+                    text = if (task == null) sectionTitle else "$sectionTitle: ${task.title}",
                     color = if (task == null) {
                         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.34f)
                     } else {
@@ -3367,13 +3402,9 @@ private fun unavailableEndTimes(
 ): Set<Int> =
     (0 until minTotalMinutes).toSet() + unavailableStartTimes(tasks)
 
-private fun taskTypeColor(type: String): Color = taskTypeColors[type] ?: ClockBlue
-
-private fun previewDraftColor(
-    draftType: String,
-): Color = taskTypeColor(draftType)
-
 private fun nextAvailableTaskColor(
+
+
     tasks: List<TimeTask>,
     preferred: Color,
 ): Color {
@@ -3457,7 +3488,7 @@ private fun TimelinePreview(
                                     fontSize = 15.sp,
                                 )
                                 Text(
-                                    text = "${iconForType(task.type)} ${task.type} · ${task.prettyTimeRange()} · ${taskWindowLabel(task)}",
+                                    text = "${task.prettyTimeRange()} · ${taskWindowLabel(task)}",
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                                     fontSize = 13.sp,
                                 )
@@ -3577,7 +3608,7 @@ private fun screenSupportText(
 ): String {
     return when (screenMode) {
         MainScreenMode.Normal -> supportQuote
-        MainScreenMode.SetProject -> if (isEditing) "Update title, type, and time." else "Set title, type, and time."
+        MainScreenMode.SetProject -> if (isEditing) "Update title, color, and time." else "Set title, color, and time."
     }
 }
 
@@ -3585,26 +3616,24 @@ private fun screenSupportText(
 
 private fun draftSummaryTitle(
     title: String,
-    type: String,
     startHour: Int,
     startMinute: Int,
     endHour: Int,
     endMinute: Int,
 ): String {
-    val draftName = title.ifBlank { "Untitled $type block" }
+    val draftName = title.ifBlank { "Untitled project" }
     return "$draftName\n${formatHourMinute(startHour, startMinute)} - ${formatHourMinute(endHour, endMinute)}"
 }
 
 private fun buildDraftSummary(
     title: String,
-    type: String,
     startHour: Int,
     startMinute: Int,
     endHour: Int,
     endMinute: Int,
 ): String {
-    val draftName = title.ifBlank { "Untitled $type block" }
-    return "$draftName · ${iconForType(type)} $type · ${formatHourMinute(startHour, startMinute)} - ${formatHourMinute(endHour, endMinute)}"
+    val draftName = title.ifBlank { "Untitled project" }
+    return "$draftName · ${formatHourMinute(startHour, startMinute)} - ${formatHourMinute(endHour, endMinute)}"
 }
 
 
@@ -3623,18 +3652,8 @@ private fun nextTaskSubtitle(task: TimeTask, now: LocalTime): String {
     return "${task.title} · begins at ${formatHourMinute(task.startHour, task.startMinute)} · in $hours hour(s) $minutes min(s)"
 }
 
-private fun iconForType(type: String?): String {
-    return when (type) {
-        "Study" -> "✏️"
-        "Work" -> "💼"
-        "Exercise" -> "🏃"
-        "Life" -> "🌙"
-        "Break" -> "☕"
-        else -> "🕒"
-    }
-}
-
 private fun nowMinute(now: LocalTime): Int = now.hour * 60 + now.minute
+
 
 private fun TimeTask.startTotalMinutes(): Int = startHour * 60 + startMinute
 
