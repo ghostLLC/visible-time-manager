@@ -14,7 +14,8 @@ import androidx.compose.animation.core.tween
 
 
 
-import androidx.compose.runtime.movableContentOf
+
+import androidx.compose.runtime.CompositionLocalProvider
 
 
 
@@ -92,6 +93,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
@@ -141,8 +143,10 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -155,7 +159,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+
 
 
 
@@ -181,6 +187,7 @@ import com.vtm.app.components.ClockFaceRenderQuality
 
 
 import com.vtm.app.model.TimeTask
+import com.vtm.app.service.TimerForegroundService
 import com.vtm.app.ui.theme.ClockBlue
 import com.vtm.app.ui.theme.ClockGreen
 import com.vtm.app.ui.theme.ClockPurple
@@ -189,11 +196,16 @@ import com.vtm.app.ui.theme.ClockTeal
 import com.vtm.app.ui.theme.ClockYellow
 import com.vtm.app.ui.theme.VTMTheme
 import java.time.Duration
+import java.time.LocalDate
 import java.time.LocalTime
+import java.time.YearMonth
 
 import java.time.format.DateTimeFormatter
 import kotlin.math.max
 import kotlin.math.roundToInt
+import org.json.JSONArray
+import org.json.JSONObject
+
 
 
 private enum class MainScreenMode {
@@ -202,28 +214,37 @@ private enum class MainScreenMode {
 }
 
 private val taskColorPalette = listOf(
-    ClockBlue,
-    ClockPurple,
-    ClockGreen,
-    ClockYellow,
-    ClockTeal,
-    ClockRed,
-    Color(0xFF5B8DEF),
-    Color(0xFF8B5CF6),
-    Color(0xFFF97316),
-    Color(0xFF14B8A6),
+    ClockBlue,           // 0xFF5B8DEF  Blue
+    ClockRed,            // 0xFFFF6B6B  Coral Red
+    ClockGreen,          // 0xFF38B27D  Green
+    ClockYellow,         // 0xFFF4B63F  Amber
+    ClockPurple,         // 0xFF8B6BFF  Violet
+    ClockTeal,           // 0xFF29B8C8  Teal
+    Color(0xFFF97316),   // Orange
+    Color(0xFFEC4899),   // Rose
+    Color(0xFF6366F1),   // Indigo
+    Color(0xFF84CC16),   // Lime
+    Color(0xFFA78BFA),   // Lavender
+    Color(0xFF14B8A6),   // Emerald
 )
-private enum class BottomNavPage {
-    Calendar,
-    Clock,
-    Profile,
+private enum class BottomNavPage(val index: Int) {
+    Calendar(0),
+    Clock(1),
+    Profile(2);
+
+    companion object {
+        fun fromIndex(index: Int) = entries.firstOrNull { it.index == index } ?: Clock
+    }
 }
+
+
 
 private data class BottomNavItem(
     val page: BottomNavPage,
     val label: String,
     val icon: ImageVector,
 )
+
 
 private val bottomNavItems = listOf(
     BottomNavItem(
@@ -238,7 +259,7 @@ private val bottomNavItems = listOf(
     ),
     BottomNavItem(
         page = BottomNavPage.Profile,
-        label = "Mine",
+        label = "Me",
         icon = Icons.Filled.Person,
     ),
 )
@@ -320,6 +341,20 @@ private fun splitSupportQuote(quote: String): Pair<String, String?> {
     }
 }
 
+private fun formatDurationLabel(totalMinutes: Int): String {
+    val safeMinutes = totalMinutes.coerceAtLeast(0)
+    val hours = safeMinutes / 60
+    val minutes = safeMinutes % 60
+    return when {
+        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
+        hours > 0 -> "${hours}h"
+        else -> "${minutes}m"
+    }
+}
+
+
+
+
 @Composable
 private fun neutralFilledButtonContainerColor(): Color {
     val colorScheme = MaterialTheme.colorScheme
@@ -386,13 +421,29 @@ fun MainScreen(
     startupWarmupActive: Boolean = false,
 ) {
 
+    val today = remember { LocalDate.now() }
+    val context = LocalContext.current
+    val taskStorage = remember(context) {
+        context.getSharedPreferences("vtm_tasks", android.content.Context.MODE_PRIVATE)
+    }
+    var selectedDateEpochDay by rememberSaveable { mutableStateOf(today.toEpochDay()) }
+    val selectedDate = remember(selectedDateEpochDay) { LocalDate.ofEpochDay(selectedDateEpochDay) }
     var screenMode by rememberSaveable { mutableStateOf(MainScreenMode.Normal) }
+    var selectedGoal by rememberSaveable { mutableStateOf("Balanced") }
+    var appLanguage by rememberSaveable { mutableStateOf(AppLanguage.English) }
+
+
+
+    var syncOnWifiOnly by rememberSaveable { mutableStateOf(true) }
+    var autoArchiveEnabled by rememberSaveable { mutableStateOf(false) }
     var tasks by remember {
+
         mutableStateOf(
             listOf(
                 TimeTask(
                     id = "day-deep-work",
                     title = "Deep Work Block",
+                    date = today,
                     startHour = 10,
                     startMinute = 0,
                     endHour = 14,
@@ -402,6 +453,7 @@ fun MainScreen(
                 TimeTask(
                     id = "evening-study",
                     title = "Evening Study Sprint",
+                    date = today.plusDays(1),
                     startHour = 16,
                     startMinute = 0,
                     endHour = 19,
@@ -411,6 +463,7 @@ fun MainScreen(
                 TimeTask(
                     id = "night-reset",
                     title = "Night Reset Session",
+                    date = today.minusDays(1),
                     startHour = 4,
                     startMinute = 0,
                     endHour = 9,
@@ -421,6 +474,8 @@ fun MainScreen(
         )
     }
     var activeBottomPage by rememberSaveable { mutableStateOf(BottomNavPage.Clock) }
+
+
 
 
     var draftTitle by rememberSaveable { mutableStateOf("") }
@@ -435,9 +490,9 @@ fun MainScreen(
     var showEditDialog by rememberSaveable { mutableStateOf(false) }
     var taskPendingEdit by remember { mutableStateOf<TimeTask?>(null) }
     var selectedClockTaskId by remember { mutableStateOf<String?>(null) }
-    var pressedClockTaskId by remember { mutableStateOf<String?>(null) }
     var pinnedClockTaskId by remember { mutableStateOf<String?>(null) }
     var selectedClockEmptySlot by remember { mutableStateOf<ClockEmptySlot?>(null) }
+
 
     var selectedClockTaskBounceKey by remember { mutableIntStateOf(0) }
     var selectedClockEmptySlotBounceKey by remember { mutableIntStateOf(0) }
@@ -447,15 +502,24 @@ fun MainScreen(
 
     var editingTaskId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val tasksExcludingEditing = remember(tasks, editingTaskId) {
-        tasks.filterNot { it.id == editingTaskId }
+    val sortedTasks = remember(tasks) {
+        tasks.sortedWith(compareBy({ it.date }, { it.startTotalMinutes() }))
     }
+
+    val selectedDateTasks = remember(sortedTasks, selectedDate) {
+        sortedTasks.filter { it.date == selectedDate }
+    }
+    val tasksExcludingEditing = remember(selectedDateTasks, editingTaskId) {
+        selectedDateTasks.filterNot { it.id == editingTaskId }
+    }
+
 
 
 
     val draftStartTotalMinutes = draftStartHour * 60 + draftStartMinute
 
     val draftEndTotalMinutes = draftEndHour * 60 + draftEndMinute
+
     val earliestDraftEndTotalMinutes = (draftStartTotalMinutes + 1).coerceAtMost(23 * 60 + 59)
     val draftOverlapTask = remember(tasksExcludingEditing, draftStartTotalMinutes, draftEndTotalMinutes) {
         tasksExcludingEditing.firstOrNull {
@@ -481,13 +545,46 @@ fun MainScreen(
 
 
 
-    val sortedTasks = remember(tasks) { tasks.sortedBy { it.startTotalMinutes() } }
+    val todayTaskStats = remember(sortedTasks, today, now) {
+        buildDayTaskStats(sortedTasks.filter { it.date == today }, now)
+    }
+
+    // — Foreground notification for active task timer —
+    val activeTodayTask = remember(sortedTasks, today, now) {
+        sortedTasks.filter { it.date == today }.firstOrNull { isTaskActive(it, now) }
+    }
+    LaunchedEffect(activeTodayTask, now) {
+        if (activeTodayTask != null) {
+            val remaining = activeTodayTask.normalizedEndTotalMinutes() - (now.hour * 60 + now.minute)
+            TimerForegroundService.start(context, activeTodayTask.title, remaining.coerceAtLeast(0))
+        } else {
+            TimerForegroundService.stop(context)
+        }
+    }
+
+
+    LaunchedEffect(taskStorage) {
+        val storedTasks = taskStorage.getString("tasks_json", null)?.let(::decodeStoredTasks).orEmpty()
+        if (storedTasks.isNotEmpty()) {
+            tasks = storedTasks.sortedWith(compareBy({ it.date }, { it.startTotalMinutes() }))
+
+        }
+    }
+
+    LaunchedEffect(tasks) {
+        taskStorage.edit()
+            .putString("tasks_json", encodeStoredTasks(tasks))
+            .apply()
+    }
+
+
+    val currentGoalOption = remember(selectedGoal) {
+        mineGoalOptions().firstOrNull { it.label == selectedGoal }
+            ?: mineGoalOptions()[1]
+    }
 
     val previewTasks = remember(
-
-
-
-        sortedTasks,
+        selectedDateTasks,
         screenMode,
         editingTaskId,
         draftTitle,
@@ -497,9 +594,11 @@ fun MainScreen(
         draftEndHour,
         draftEndMinute,
         draftTimeError,
+        selectedDate,
     ) {
+
         if (screenMode != MainScreenMode.SetProject || draftTimeError != null) {
-            sortedTasks
+            selectedDateTasks
         } else {
             val draftColor = Color(draftColorArgb)
             val draftPreviewTask = TimeTask(
@@ -507,6 +606,7 @@ fun MainScreen(
                 title = draftTitle.ifBlank {
                     if (editingTaskId != null) "Edit project" else "New project"
                 },
+                date = selectedDate,
                 startHour = draftStartHour,
                 startMinute = draftStartMinute,
                 endHour = draftEndHour,
@@ -516,6 +616,7 @@ fun MainScreen(
             (tasksExcludingEditing + draftPreviewTask).sortedBy { it.startTotalMinutes() }
         }
     }
+
 
 
 
@@ -571,30 +672,32 @@ fun MainScreen(
 
 
     fun clearClockTaskPeakState(clearSelection: Boolean = false) {
-        pressedClockTaskId = null
         pinnedClockTaskId = null
         if (clearSelection) {
             selectedClockTaskId = null
         }
     }
 
+
     fun releaseClockTaskPeak() {
         if (pinnedClockTaskId != null) {
             return
         }
-        pressedClockTaskId = null
     }
 
 
 
 
 
+
     fun beginEditing(task: TimeTask) {
+        selectedDateEpochDay = task.date.toEpochDay()
+        activeBottomPage = BottomNavPage.Clock
         selectedClockTaskId = task.id
-        pressedClockTaskId = null
         pinnedClockTaskId = task.id
         selectedClockEmptySlot = null
         showSetActionsExpanded = false
+
         editingTaskId = task.id
         draftTitle = task.title
         draftColorArgb = task.color.toArgb()
@@ -608,8 +711,8 @@ fun MainScreen(
 
     }
 
+
     fun pinClockTaskPeak(task: TimeTask) {
-        pressedClockTaskId = null
         pinnedClockTaskId = task.id
         selectedClockTaskId = task.id
         selectedClockEmptySlot = null
@@ -618,16 +721,19 @@ fun MainScreen(
     }
 
 
+
     fun resetDraft() {
         editingTaskId = null
         selectedClockEmptySlot = null
-        draftTitle = ""
-        draftColorArgb = taskColorPalette.first().toArgb()
-        draftStartHour = if (isNightMode) 19 else 8
-        draftStartMinute = 0
-        draftEndHour = if (isNightMode) 20 else 9
-        draftEndMinute = 0
+        draftTitle = suggestedDraftTitle(selectedGoal, isNightMode)
+        draftColorArgb = preferredDraftColor(selectedGoal).toArgb()
+        val defaultDraftRange = defaultDraftRangeForGoal(selectedGoal, isNightMode, syncOnWifiOnly)
+        draftStartHour = defaultDraftRange.first / 60
+        draftStartMinute = defaultDraftRange.first % 60
+        draftEndHour = defaultDraftRange.second / 60
+        draftEndMinute = defaultDraftRange.second % 60
     }
+
 
 
 
@@ -704,8 +810,8 @@ fun MainScreen(
         selectedClockEmptySlot = slot
         showSetActionsExpanded = false
         editingTaskId = null
-        draftTitle = ""
-        draftColorArgb = nextAvailableTaskColor(tasksExcludingEditing, taskColorPalette.first()).toArgb()
+        draftTitle = suggestedDraftTitle(selectedGoal, isNightMode)
+        draftColorArgb = nextAvailableTaskColor(tasksExcludingEditing, preferredDraftColor(selectedGoal)).toArgb()
         val boundedStart = slot.startTotalMinutes.coerceIn(0, 30 * 60 - 1)
         val boundedEnd = slot.endTotalMinutes.coerceIn(boundedStart + 1, 30 * 60)
         applyDraftRange(
@@ -717,6 +823,7 @@ fun MainScreen(
         showEditDialog = false
         screenMode = MainScreenMode.SetProject
     }
+
 
 
 
@@ -766,21 +873,26 @@ fun MainScreen(
         val savedTask = TimeTask(
             id = editingTaskId ?: "task-${System.currentTimeMillis()}",
             title = title,
+            date = selectedDate,
             startHour = draftStartHour,
             startMinute = draftStartMinute,
             endHour = draftEndHour,
             endMinute = draftEndMinute,
             color = draftColor,
         )
-        tasks = (tasksExcludingEditing + savedTask).sortedBy { it.startTotalMinutes() }
+        tasks = (tasks.filterNot { it.id == editingTaskId } + savedTask)
+            .sortedWith(compareBy({ it.date }, { it.startTotalMinutes() }))
+
         selectedClockTaskId = savedTask.id
-        pressedClockTaskId = null
         pinnedClockTaskId = savedTask.id
         selectedClockTaskBounceKey += 1
+
         selectedClockEmptySlot = null
         screenMode = MainScreenMode.Normal
+        activeBottomPage = BottomNavPage.Clock
         resetDraft()
     }
+
 
 
 
@@ -924,12 +1036,11 @@ fun MainScreen(
                 },
         ) {
             val cameraDistancePx = with(density) { 132.dp.toPx() }
-            val activeCoinRotation = if (isCoinFlipSettling) {
+            val coinRotation = if (isCoinFlipSettling) {
                 coinFlipRotation.value
             } else {
                 coinFlipDragRotation
             }
-            val coinRotation = activeCoinRotation
             val rotationRadians = Math.toRadians(coinRotation.toDouble())
             val absSin = kotlin.math.abs(kotlin.math.sin(rotationRadians)).toFloat()
             val absCos = kotlin.math.abs(kotlin.math.cos(rotationRadians)).toFloat()
@@ -942,12 +1053,12 @@ fun MainScreen(
             val faceLift = with(density) { absSin * 8.dp.toPx() }
             val frontNightMode = coinFlipBaseNightMode
             val backNightMode = !coinFlipBaseNightMode
-            val coinThickness = with(density) { (8.dp + 14.dp * absSin).toPx() }
+            val rimStrokePx = with(density) { (8.dp + 14.dp * absSin).toPx() }
             val rimAlpha = (0.22f + 0.54f * absSin).coerceIn(0f, 0.9f)
-            val rimStrokePx = coinThickness
             val rimInsetPx = rimStrokePx / 2f + with(density) { 6.dp.toPx() }
             val shadowWidthDp = with(density) { 104.dp + 18.dp * absSin }
             val shadowHeightDp = with(density) { 7.dp + 3.dp * absSin }
+
             val shadowAlpha = (0.07f + 0.08f * absSin).coerceAtMost(0.16f)
             val shadowAnchorYPx = with(density) { 92.dp.toPx() }
             val shadowScaleX = 0.92f + 0.06f * absSin
@@ -1173,21 +1284,21 @@ fun MainScreen(
                                 beginEditing(tappedTask)
                             } else {
                                 selectedClockEmptySlot = null
-                                pressedClockTaskId = null
                                 pinnedClockTaskId = null
                                 selectedClockTaskId = null
                             }
+
                         },
 
 
                         onTaskDoubleTap = { tappedTask ->
                             selectedClockEmptySlot = null
-                            pressedClockTaskId = null
                             selectedClockTaskId = tappedTask.id
                             pinnedClockTaskId = tappedTask.id
                             selectedClockTaskBounceKey += 1
                             beginEditing(tappedTask)
                         },
+
                         onEmptyPress = { pressedEmptySlot ->
                             clearClockTaskPeakState(clearSelection = true)
                             selectedClockEmptySlot = pressedEmptySlot
@@ -1261,9 +1372,10 @@ fun MainScreen(
             darkTheme = displayNightMode,
             applySystemBars = false,
         ) {
-            val pageVisibleTasks = remember(sortedTasks, displayNightMode) {
-                tasksForMode(sortedTasks, displayNightMode)
+            val pageVisibleTasks = remember(selectedDateTasks, displayNightMode) {
+                tasksForMode(selectedDateTasks, displayNightMode)
             }
+
             val pageCurrentTask = remember(pageVisibleTasks, now) {
                 pageVisibleTasks.firstOrNull { task -> isTaskActive(task, now) }
             }
@@ -1287,7 +1399,7 @@ fun MainScreen(
             val contentHorizontalPadding = if (isCompactWidth) 16.dp else 24.dp
             val contentVerticalPadding = if (isCompactWidth) 16.dp else 20.dp
             val primaryActionHorizontalPadding = if (isCompactWidth) 16.dp else 24.dp
-            val primarySectionSpacing = if (isCompactWidth) 20.dp else 30.dp
+
             val shouldShowBottomPrimaryAction = screenMode == MainScreenMode.SetProject
             val primaryActionLabel = if (editingTaskId != null) "Back to Home" else "Back"
             val shouldShowBottomNav = screenMode == MainScreenMode.Normal
@@ -1322,18 +1434,32 @@ fun MainScreen(
                         }
 
                         shouldShowBottomNav -> {
-                            NavigationBar {
+                            NavigationBar(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
+                                tonalElevation = 0.dp,
+                            ) {
                                 bottomNavItems.forEach { item ->
+                                    val selected = activeBottomPage == item.page
                                     NavigationBarItem(
-                                        selected = activeBottomPage == item.page,
-                                        onClick = { activeBottomPage = item.page },
+                                        selected = selected,
+                                        onClick = {
+                                            activeBottomPage = item.page
+                                        },
                                         icon = {
                                             Icon(
                                                 imageVector = item.icon,
                                                 contentDescription = item.label,
                                             )
                                         },
+                                        label = null,
                                         alwaysShowLabel = false,
+                                        colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.88f),
+                                            unselectedIconColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                                            unselectedTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                                        ),
                                     )
                                 }
                             }
@@ -1342,16 +1468,74 @@ fun MainScreen(
                 },
             ) { paddingValues ->
 
+                // — Three-page HorizontalPager for swipe navigation —
+                val mainPagerState = rememberPagerState(
+                    initialPage = BottomNavPage.Clock.index,
+                    pageCount = { 3 },
+                )
 
+                // Sync pager → bottom nav
+                LaunchedEffect(mainPagerState.currentPage, mainPagerState.targetPage) {
+                    val page = if (mainPagerState.isScrollInProgress) mainPagerState.targetPage else mainPagerState.currentPage
+                    val synced = BottomNavPage.fromIndex(page)
+                    if (activeBottomPage != synced && screenMode == MainScreenMode.Normal) {
+                        activeBottomPage = synced
+                    }
+                }
+                // Sync bottom nav → pager
+                LaunchedEffect(activeBottomPage) {
+                    if (screenMode == MainScreenMode.Normal && mainPagerState.currentPage != activeBottomPage.index) {
+                        mainPagerState.animateScrollToPage(activeBottomPage.index)
+                    }
+                }
+
+                HorizontalPager(
+                    state = mainPagerState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues),
+                    beyondViewportPageCount = 1,
+                    userScrollEnabled = screenMode == MainScreenMode.Normal,
+                ) { page ->
 
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(paddingValues)
                         .padding(horizontal = contentHorizontalPadding, vertical = contentVerticalPadding),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    if (screenMode == MainScreenMode.Normal && activeBottomPage == BottomNavPage.Clock) {
+                    if (screenMode == MainScreenMode.Normal && page == BottomNavPage.Clock.index) {
+                        // — Date navigation strip —
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = { selectedDateEpochDay = selectedDate.minusDays(1).toEpochDay() },
+                                contentPadding = PaddingValues(horizontal = 4.dp),
+                            ) { Text("‹", fontSize = 16.sp) }
+                            Text(
+                                text = "${selectedDate.monthValue}/${selectedDate.dayOfMonth} ${appLanguage.strWeekday(selectedDate.dayOfWeek.value)}",
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            TextButton(
+                                onClick = { selectedDateEpochDay = selectedDate.plusDays(1).toEpochDay() },
+                                contentPadding = PaddingValues(horizontal = 4.dp),
+                            ) { Text("›", fontSize = 16.sp) }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            TextButton(
+                                onClick = {
+                                    activeBottomPage = BottomNavPage.Calendar
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                            ) { Text(appLanguage.strViewCalendar(), fontSize = 11.sp) }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
                         Column(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -1384,49 +1568,112 @@ fun MainScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
-                    } else if (screenMode != MainScreenMode.Normal) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                    } else if (screenMode != MainScreenMode.Normal && page == BottomNavPage.Clock.index) {
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
-                    if (screenMode == MainScreenMode.Normal && activeBottomPage != BottomNavPage.Clock) {
-                        when (activeBottomPage) {
-                            BottomNavPage.Calendar -> {
-                                CalendarReservedPage(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(1f, fill = true),
-                                )
-                            }
-
-                            BottomNavPage.Profile -> {
-                                MineReservedPage(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(1f, fill = true),
-                                )
-                            }
-
-                            BottomNavPage.Clock -> Unit
-                        }
-                    } else {
+                    if (screenMode == MainScreenMode.Normal && page == BottomNavPage.Calendar.index) {
+                        CalendarReservedPage(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = true),
+                            selectedDate = selectedDate,
+                            tasks = sortedTasks,
+                            onSelectedDateChange = { selectedDateEpochDay = it.toEpochDay() },
+                            onOpenClockDay = {
+                                activeBottomPage = BottomNavPage.Clock
+                                screenMode = MainScreenMode.Normal
+                            },
+                            onTaskClick = { task ->
+                                selectedDateEpochDay = task.date.toEpochDay()
+                                selectedClockTaskId = task.id
+                                pinnedClockTaskId = task.id
+                                selectedClockEmptySlot = null
+                                activeBottomPage = BottomNavPage.Clock
+                                screenMode = MainScreenMode.Normal
+                                selectedClockTaskBounceKey += 1
+                            },
+                            onTaskDelete = { task ->
+                                tasks = tasks.filterNot { it.id == task.id }
+                            },
+                            onTaskEdit = { task ->
+                                beginEditing(task)
+                            },
+                            onAddTask = {
+                                resetDraft()
+                                screenMode = MainScreenMode.SetProject
+                                activeBottomPage = BottomNavPage.Clock
+                            },
+                            appLanguage = appLanguage,
+                        )
+                    } else if (screenMode == MainScreenMode.Normal && page == BottomNavPage.Profile.index) {
+                        MineReservedPage(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = true),
+                            selectedGoal = selectedGoal,
+                            syncOnWifiOnly = syncOnWifiOnly,
+                            autoArchiveEnabled = autoArchiveEnabled,
+                            todayTaskStats = todayTaskStats,
+                            currentGoalAccent = currentGoalOption.accent,
+                            isNightMode = displayNightMode,
+                            appLanguage = appLanguage,
+                            onGoalChange = { selectedGoal = it },
+                            onSyncChange = { syncOnWifiOnly = it },
+                            onAutoArchiveChange = { autoArchiveEnabled = it },
+                            onNightModeChange = onNightModeChange,
+                            onLanguageChange = { appLanguage = it },
+                            onNavigateToClock = {
+                                activeBottomPage = BottomNavPage.Clock
+                                screenMode = MainScreenMode.Normal
+                            },
+                            onNavigateToCalendar = {
+                                activeBottomPage = BottomNavPage.Calendar
+                                screenMode = MainScreenMode.Normal
+                            },
+                        )
+                    } else if (page == BottomNavPage.Clock.index) {
 
                         if (useSimplifiedNormalPreview && screenMode == MainScreenMode.Normal) {
-                            Column(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                ProjectSummaryCard(
-                                    sectionTitle = if (pageCurrentTask == null) "Current" else "Current",
-                                    task = pageCurrentTask,
-                                )
+                            if (pageCurrentTask == null && pageNextTask == null) {
+                                // — Empty state on Clock page —
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 24.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    Text(
+                                        text = appLanguage.strNoTasksEmpty(),
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = appLanguage.strAddFirstTask(),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                        fontSize = 13.sp,
+                                    )
+                                }
+                            } else {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    ProjectSummaryCard(
+                                        sectionTitle = "Current",
+                                        task = pageCurrentTask,
+                                    )
 
-                                Spacer(modifier = Modifier.height(10.dp))
+                                    Spacer(modifier = Modifier.height(10.dp))
 
-                                ProjectSummaryCard(
-                                    sectionTitle = if (pageNextTask == null) "Next" else "Next",
-                                    task = pageNextTask,
-                                )
+                                    ProjectSummaryCard(
+                                        sectionTitle = "Next",
+                                        task = pageNextTask,
+                                    )
+                                }
                             }
                         } else {
                             CoinFlipClock(
@@ -1435,7 +1682,11 @@ fun MainScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(primarySectionSpacing))
+
+
+
+
+
 
 
                         if (screenMode != MainScreenMode.SetProject) {
@@ -1537,6 +1788,7 @@ fun MainScreen(
                                         HorizontalPager(
                                             state = pagerState,
                                             modifier = Modifier.fillMaxWidth(),
+                                            beyondViewportPageCount = 1,
                                             userScrollEnabled = pageVisibleTasks.isNotEmpty() && !isClockFlipInFlight,
                                             verticalAlignment = Alignment.Top,
                                         ) { page ->
@@ -1603,17 +1855,39 @@ fun MainScreen(
                                                             .fillMaxWidth()
                                                             .fillMaxSize(),
                                                     ) {
-                                                        ProjectSummaryCard(
-                                                            sectionTitle = if (pageCurrentTask == null) "Current" else "Current",
-                                                            task = pageCurrentTask,
-                                                        )
+                                                        if (pageCurrentTask == null && pageNextTask == null) {
+                                                            Column(
+                                                                modifier = Modifier
+                                                                    .fillMaxWidth()
+                                                                    .padding(vertical = 20.dp),
+                                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                            ) {
+                                                                Text(
+                                                                    text = appLanguage.strNoTasksEmpty(),
+                                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                                                    fontSize = 15.sp,
+                                                                    fontWeight = FontWeight.Medium,
+                                                                )
+                                                                Spacer(modifier = Modifier.height(6.dp))
+                                                                Text(
+                                                                    text = appLanguage.strAddFirstTask(),
+                                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                                                    fontSize = 13.sp,
+                                                                )
+                                                            }
+                                                        } else {
+                                                            ProjectSummaryCard(
+                                                                sectionTitle = "Current",
+                                                                task = pageCurrentTask,
+                                                            )
 
-                                                        Spacer(modifier = Modifier.height(10.dp))
+                                                            Spacer(modifier = Modifier.height(10.dp))
 
-                                                        ProjectSummaryCard(
-                                                            sectionTitle = if (pageNextTask == null) "Next" else "Next",
-                                                            task = pageNextTask,
-                                                        )
+                                                            ProjectSummaryCard(
+                                                                sectionTitle = "Next",
+                                                                task = pageNextTask,
+                                                            )
+                                                        }
 
 
 
@@ -1708,6 +1982,7 @@ fun MainScreen(
                                                 onSelectStartTime = { updateDraftStart(it) },
                                                 onSelectEndTime = { updateDraftEnd(it) },
                                                 onSave = { saveDraft() },
+                                                appLanguage = appLanguage,
                                             )
                                         }
                                     }
@@ -1716,12 +1991,14 @@ fun MainScreen(
                         }
                     }
                 }
-            }
+                } // end Column
+                } // end HorizontalPager page
 
         }
     }
 
 
+    CompositionLocalProvider(LocalAppLanguage provides appLanguage) {
     Box(modifier = Modifier.fillMaxSize()) {
         ScreenScaffold(
             displayNightMode = isNightMode,
@@ -1744,6 +2021,7 @@ fun MainScreen(
                 selectedMinute = draftStartMinute,
                 minSelectableTotalMinutes = earliestDraftEndTotalMinutes,
                 occupiedTimes = unavailableEndTimes(tasksExcludingEditing, earliestDraftEndTotalMinutes),
+                appLanguage = appLanguage,
             )
         }
     }
@@ -1797,8 +2075,7 @@ fun MainScreen(
         )
     }
 
-
-
+    } // CompositionLocalProvider
 }
 
 
@@ -1870,6 +2147,7 @@ private fun HiddenWarmupPrecompose(
     selectedMinute: Int,
     minSelectableTotalMinutes: Int,
     occupiedTimes: Set<Int>,
+    appLanguage: AppLanguage = LocalAppLanguage.current,
 ) {
     Box(
         modifier = Modifier
@@ -1931,6 +2209,7 @@ private fun HiddenWarmupPrecompose(
                     minTotalMinutes = minSelectableTotalMinutes,
                     occupiedTimes = occupiedTimes,
                     isDarkMode = displayNightMode,
+                    appLanguage = appLanguage,
                     onHourSelected = {},
                     onMinuteSelected = {},
                 )
@@ -2193,7 +2472,7 @@ private fun ModeToggleRow(
 private fun CompactModeChip(
     modifier: Modifier = Modifier,
     text: String,
-    timeRange: String,
+    timeRange: String?,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -2241,8 +2520,9 @@ private fun CompactModeChip(
             fontSize = 14.sp,
         )
 
-        Text(
-            text = timeRange,
+        if (timeRange != null) {
+            Text(
+                text = timeRange,
             color = if (selected) {
                 contentColor.copy(alpha = 0.42f)
             } else {
@@ -2252,7 +2532,8 @@ private fun CompactModeChip(
             fontSize = 8.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-        )
+            )
+        }
     }
 }
 
@@ -2290,7 +2571,11 @@ private fun DraftProjectCard(
     onSelectStartTime: (Int) -> Unit,
     onSelectEndTime: (Int) -> Unit,
     onSave: () -> Unit,
+    appLanguage: AppLanguage,
 ) {
+    val durationMinutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute)
+    val durationLabel = formatDurationLabel(durationMinutes)
+
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
@@ -2302,36 +2587,75 @@ private fun DraftProjectCard(
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp, vertical = 18.dp),
         ) {
-            Text(
-                text = "Color",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = appLanguage.strColorLabel(),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(14.dp)
+                            .height(14.dp)
+                            .background(draftColor, CircleShape),
+                    )
+                    Text(
+                        text = appLanguage.strColorSelected(),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.54f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
 
             FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 taskColorPalette.forEach { optionColor ->
                     val isSelected = optionColor == selectedColor
+                    val scale by animateFloatAsState(
+                        targetValue = if (isSelected) 1f else 0.82f,
+                        animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
+                        label = "color-scale",
+                    )
                     Box(
                         modifier = Modifier
-                            .width(28.dp)
-                            .height(28.dp)
-                            .border(
-                                width = if (isSelected) 2.dp else 1.dp,
-                                color = if (isSelected) {
-                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f)
-                                } else {
-                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)
-                                },
-                                shape = CircleShape,
+                            .size(36.dp)
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                            }
+                            .then(
+                                if (isSelected) Modifier.border(
+                                    width = 2.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                                    shape = CircleShape,
+                                ) else Modifier
                             )
                             .background(optionColor, CircleShape)
                             .clickable { onSelectColor(optionColor) },
-                    )
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = 0.92f),
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -2344,7 +2668,26 @@ private fun DraftProjectCard(
                 singleLine = true,
                 shape = RoundedCornerShape(18.dp),
             )
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Time",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = durationLabel,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
             DualTimePickerRow(
                 startHour = startHour,
                 startMinute = startMinute,
@@ -2387,6 +2730,7 @@ private fun DraftProjectCard(
         }
     }
 }
+
 
 
 
@@ -2493,6 +2837,7 @@ private fun CompactTimePickerDialog(
     occupiedTimes: Set<Int>,
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit,
+    appLanguage: AppLanguage = LocalAppLanguage.current,
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val isDarkMode = colorScheme.surface.luminance() < 0.5f
@@ -2562,6 +2907,7 @@ private fun CompactTimePickerDialog(
                     minTotalMinutes = minTotalMinutes,
                     occupiedTimes = occupiedTimes,
                     isDarkMode = isDarkMode,
+                    appLanguage = appLanguage,
                     onHourSelected = { selectedHour = it },
                     onMinuteSelected = { selectedMinute = it },
                 )
@@ -2606,42 +2952,1046 @@ private fun CompactTimePickerDialog(
 
 
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CalendarReservedPage(
+    selectedDate: LocalDate,
+    tasks: List<TimeTask>,
+    onSelectedDateChange: (LocalDate) -> Unit,
+    onOpenClockDay: () -> Unit,
+    onTaskClick: (TimeTask) -> Unit,
+    onTaskDelete: (TimeTask) -> Unit,
+    onTaskEdit: (TimeTask) -> Unit,
+    onAddTask: () -> Unit,
     modifier: Modifier = Modifier,
+    appLanguage: AppLanguage = LocalAppLanguage.current,
 ) {
-    ReservedRootPage(
-        title = "Calendar",
-        subtitle = "Calendar page is reserved for now. We can fill in schedule and date capabilities later.",
-        sectionLabel = "Reserved area",
-        slots = listOf(
-            "顶部标题与日期筛选区",
-            "月历 / 周视图主体内容区",
-            "底部日程列表或统计扩展区",
-        ),
-        modifier = modifier,
-    )
+    val today = remember { LocalDate.now() }
+    var displayedMonth by rememberSaveable { mutableStateOf(YearMonth.from(selectedDate)) }
+
+    val monthCells = remember(displayedMonth) { calendarMonthCells(displayedMonth) }
+    val activityCounts = remember(tasks) { calendarActivityCounts(tasks) }
+    val selectedDateTasks = remember(tasks, selectedDate) {
+        tasks.filter { it.date == selectedDate }.sortedBy { it.startTotalMinutes() }
+    }
+
+    // — Day summary stats —
+    val totalPlannedMinutes = remember(selectedDateTasks) {
+        selectedDateTasks.sumOf { (it.normalizedEndTotalMinutes() - it.startTotalMinutes()).coerceAtLeast(0) }
+    }
+    val totalFreeMinutes = (24 * 60 - totalPlannedMinutes).coerceAtLeast(0)
+
+    Column(
+        modifier = modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        // — Month header: compact, no card wrapper —
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = appLanguage.strMonthYear(displayedMonth.year, displayedMonth.monthValue),
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { displayedMonth = displayedMonth.minusMonths(1) }) { Text("\u2039") }
+                TextButton(onClick = {
+                    displayedMonth = YearMonth.from(today)
+                    onSelectedDateChange(today)
+                }) { Text(appLanguage.strToday(), fontSize = 12.sp) }
+                TextButton(onClick = { displayedMonth = displayedMonth.plusMonths(1) }) { Text("\u203a") }
+            }
+        }
+
+        // — Weekday labels —
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            (1..7).forEach { dow ->
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = appLanguage.strWeekdayHeader(dow),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        }
+
+        // — Month grid —
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            monthCells.chunked(7).forEach { week ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    week.forEach { date ->
+                        CalendarMonthDayCell(
+                            modifier = Modifier.weight(1f),
+                            date = date,
+                            selected = date == selectedDate,
+                            isToday = date == today,
+                            activityCount = date?.let { activityCounts[it] } ?: 0,
+                            onClick = {
+                                if (date != null) {
+                                    onSelectedDateChange(date)
+                                    displayedMonth = YearMonth.from(date)
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Mini 24h timeline bar ──
+        CalendarDayTimelineBar(
+            tasks = selectedDateTasks,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(22.dp),
+        )
+
+        // — Selected day section: header + summary + tasks —
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Date header with add button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "${selectedDate.monthValue}/${selectedDate.dayOfMonth} ${appLanguage.strWeekday(selectedDate.dayOfWeek.value)}",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    if (selectedDateTasks.isNotEmpty()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = appLanguage.strItems(selectedDateTasks.size),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Summary stats
+                    Text(
+                        text = "${formatDurationLabel(totalPlannedMinutes)} ${appLanguage.strPlanned()} \u00b7 ${formatDurationLabel(totalFreeMinutes)} ${appLanguage.strFree()}",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                        fontSize = 11.sp,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    // Quick-add button
+                    OutlinedButton(
+                        onClick = onAddTask,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                    ) {
+                        Text("+ ${appLanguage.strAddTask()}", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
+            if (selectedDateTasks.isEmpty()) {
+                // — Empty state with guidance —
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = appLanguage.strNoTasksEmpty(),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = appLanguage.strAddFirstTask(),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                        fontSize = 13.sp,
+                    )
+                }
+            } else {
+                selectedDateTasks.forEach { task ->
+                    SwipeableTaskRow(
+                        task = task,
+                        appLanguage = appLanguage,
+                        onClick = { onTaskClick(task) },
+                        onDelete = { onTaskDelete(task) },
+                        onEdit = { onTaskEdit(task) },
+                    )
+                }
+
+                TextButton(
+                    onClick = onOpenClockDay,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(appLanguage.strViewClock(), fontSize = 12.sp)
+                }
+            }
+        }
+    }
 }
 
+private fun calendarActivityCounts(tasks: List<TimeTask>): Map<LocalDate, Int> =
+    tasks.groupingBy { it.date }.eachCount()
+
+
+private fun calendarMonthCells(month: YearMonth): List<LocalDate?> {
+    val firstDay = month.atDay(1)
+    val leadingEmpty = firstDay.dayOfWeek.value - 1
+    val days = List(month.lengthOfMonth()) { index -> month.atDay(index + 1) }
+    val totalCells = leadingEmpty + days.size
+    val trailingEmpty = (7 - totalCells % 7) % 7
+    return List(leadingEmpty) { null } + days + List(trailingEmpty) { null }
+}
+
+
+
+@Composable
+private fun CalendarDayTimelineBar(
+    tasks: List<TimeTask>,
+    modifier: Modifier = Modifier,
+) {
+    val isDarkMode = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val trackColor = if (isDarkMode) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+    }
+    val dayDividerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    val nightDividerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+
+    Box(modifier = modifier.clip(RoundedCornerShape(6.dp))) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val fullMinutes = 24 * 60f
+
+            // Background track
+            drawRect(color = trackColor)
+
+            // Day/Night divider at 6:00 and 18:00
+            val dayStartX = size.width * (6 * 60f / fullMinutes)
+            val nightStartX = size.width * (18 * 60f / fullMinutes)
+            drawLine(
+                color = dayDividerColor,
+                start = Offset(dayStartX, 0f),
+                end = Offset(dayStartX, size.height),
+                strokeWidth = 1.dp.toPx(),
+            )
+            drawLine(
+                color = nightDividerColor,
+                start = Offset(nightStartX, 0f),
+                end = Offset(nightStartX, size.height),
+                strokeWidth = 1.dp.toPx(),
+            )
+
+            // Task segments
+            val cornerRadius = 3.dp.toPx()
+            tasks.forEach { task ->
+                val startMin = task.startTotalMinutes().toFloat()
+                val endMin = task.normalizedEndTotalMinutes().coerceAtMost(24 * 60).toFloat()
+                val left = size.width * (startMin / fullMinutes)
+                val right = size.width * (endMin / fullMinutes)
+                val segmentWidth = (right - left).coerceAtLeast(cornerRadius * 2)
+                drawRoundRect(
+                    color = task.color.copy(alpha = 0.82f),
+                    topLeft = Offset(left, 1.dp.toPx()),
+                    size = Size(segmentWidth, size.height - 2.dp.toPx()),
+                    cornerRadius = CornerRadius(cornerRadius, cornerRadius),
+                )
+            }
+        }
+
+        // "D" and "N" labels — overlaid as Compose Text
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 0:00–6:00 midnight zone (skip)
+            Spacer(modifier = Modifier.weight(6f))
+            // 6:00–18:00 day zone
+            Text(
+                text = "D",
+                color = labelColor,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(12f),
+            )
+            // 18:00–24:00 night zone
+            Text(
+                text = "N",
+                color = labelColor,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(6f),
+            )
+        }
+    }
+}
+
+
+
+
+
+
+@Composable
+private fun CalendarMonthDayCell(
+    date: LocalDate?,
+    selected: Boolean,
+    isToday: Boolean,
+    activityCount: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val bgColor = when {
+        selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        isToday -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+        else -> Color.Transparent
+    }
+    val borderColor = when {
+        selected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.36f)
+        isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+        else -> Color.Transparent
+    }
+
+    Box(
+        modifier = modifier
+            .aspectRatio(1f)
+            .background(bgColor, RoundedCornerShape(12.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+            .then(if (date != null) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (date != null) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = date.dayOfMonth.toString(),
+                    color = when {
+                        selected -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurface
+                    },
+                    fontSize = 13.sp,
+                    fontWeight = if (selected || isToday) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                if (activityCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .height(4.dp)
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary else ClockBlue,
+                                CircleShape,
+                            ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+// — Swipeable task row with left-swipe-to-delete —
+@Composable
+private fun SwipeableTaskRow(
+    task: TimeTask,
+    appLanguage: AppLanguage,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    val maxSwipeDistance = 200f
+    val deleteThreshold = 160f
+    val isDarkMode = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val deleteBgColor = Color(0xFFE53935).copy(alpha = if (isDarkMode) 0.85f else 0.9f)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (offsetX < -deleteThreshold) deleteBgColor else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (offsetX < -deleteThreshold) {
+                            onDelete()
+                        }
+                        offsetX = 0f
+                    },
+                    onDragCancel = {
+                        offsetX = 0f
+                    },
+                ) { _, dragAmount ->
+                    val newOffset = (offsetX + dragAmount).coerceIn(-maxSwipeDistance, 0f)
+                    offsetX = newOffset
+                }
+            }
+    ) {
+        // Background: delete icon revealed on swipe
+        if (offsetX < -10f) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = 20.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.DeleteOutline,
+                    contentDescription = appLanguage.strDelete(),
+                    tint = Color.White.copy(alpha = (kotlin.math.abs(offsetX) / deleteThreshold).coerceIn(0f, 1f)),
+                    modifier = Modifier.padding(vertical = 14.dp),
+                )
+            }
+        }
+
+        // Foreground: task content
+        Row(
+            modifier = Modifier
+                .offset(x = with(LocalDensity.current) { offsetX.toDp() })
+                .fillMaxWidth()
+                .clickable { onClick() }
+                .padding(vertical = 6.dp, horizontal = 4.dp)
+                .background(MaterialTheme.colorScheme.background, RoundedCornerShape(12.dp))
+                .padding(vertical = 6.dp, horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .height(24.dp)
+                    .background(task.color, RoundedCornerShape(2.dp)),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = task.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = task.prettyTimeRange(),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f),
+                    fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MineReservedPage(
     modifier: Modifier = Modifier,
+    selectedGoal: String,
+    syncOnWifiOnly: Boolean,
+    autoArchiveEnabled: Boolean,
+    todayTaskStats: MineTodayTaskStats,
+    currentGoalAccent: Color,
+    isNightMode: Boolean,
+    appLanguage: AppLanguage,
+    onGoalChange: (String) -> Unit,
+    onSyncChange: (Boolean) -> Unit,
+    onAutoArchiveChange: (Boolean) -> Unit,
+    onNightModeChange: (Boolean) -> Unit,
+    onLanguageChange: (AppLanguage) -> Unit,
+    onNavigateToClock: () -> Unit = {},
+    onNavigateToCalendar: () -> Unit = {},
 ) {
-    ReservedRootPage(
-        title = "Mine",
-        subtitle = "Mine page is reserved for now. We can place profile and personal settings here later.",
-        sectionLabel = "Reserved area",
-        slots = listOf(
-            "个人信息头部区",
-            "设置与偏好入口区",
-            "其他账号 / 数据管理扩展区",
-        ),
-        modifier = modifier,
+    val goals = remember { mineGoalOptions() }
+
+    Column(
+        modifier = modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        // — Identity header: minimal —
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(48.dp)
+                    .height(48.dp)
+                    .background(currentGoalAccent.copy(alpha = 0.12f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "W",
+                    color = currentGoalAccent,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Column {
+                Text(
+                    text = "Wanxing",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = if (todayTaskStats.totalTaskCount == 0) appLanguage.strNoScheduleYet()
+                    else "${appLanguage.strItems(todayTaskStats.totalTaskCount)} · ${formatDurationLabel(todayTaskStats.totalPlannedMinutes)}",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
+                    fontSize = 13.sp,
+                )
+            }
+        }
+
+        // — Today at a glance —
+        if (todayTaskStats.totalTaskCount > 0) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                todayTaskStats.activeTaskTitle?.let { title ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateToClock() },
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(8.dp)
+                                .height(8.dp)
+                                .background(currentGoalAccent, CircleShape),
+                        )
+                        Text(
+                            text = appLanguage.strActive(),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            text = title,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                todayTaskStats.nextTaskTitle?.let { next ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigateToClock() },
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(8.dp)
+                                .height(8.dp)
+                                .background(ClockGreen, CircleShape),
+                        )
+                        Text(
+                            text = appLanguage.strNext(),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            text = buildString {
+                                append(next)
+                                todayTaskStats.nextTaskStartLabel?.let { append(" · $it") }
+                            },
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+
+        // — Quick links to other pages: flat rows, no card —
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onNavigateToClock() }
+                    .background(currentGoalAccent.copy(alpha = 0.06f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AccessTime,
+                    contentDescription = null,
+                    tint = currentGoalAccent,
+                    modifier = Modifier.width(18.dp).height(18.dp),
+                )
+                Text(
+                    text = appLanguage.strClock(),
+                    color = currentGoalAccent,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onNavigateToCalendar() }
+                    .background(ClockTeal.copy(alpha = 0.06f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.DateRange,
+                    contentDescription = null,
+                    tint = ClockTeal,
+                    modifier = Modifier.width(18.dp).height(18.dp),
+                )
+                Text(
+                    text = appLanguage.strCalendar(),
+                    color = ClockTeal,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        // — Divider —
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)),
+        )
+
+        // — Goal selection: FlowRow for flexible wrapping —
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = appLanguage.strStrategy(),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                goals.forEach { goal ->
+                    MineGoalChip(
+                        option = goal,
+                        selected = selectedGoal == goal.label,
+                        onClick = { onGoalChange(goal.label) },
+                    )
+                }
+            }
+        }
+
+        // — Settings: inline toggles, no dialog —
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = appLanguage.strSettings(),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
+
+            MineSettingToggleRow(
+                icon = Icons.Filled.Tune,
+                title = appLanguage.strWifiSyncTitle(),
+                subtitle = appLanguage.strWifiSync(syncOnWifiOnly),
+                accent = ClockBlue,
+                checked = syncOnWifiOnly,
+                onCheckedChange = onSyncChange,
+                statusLabel = appLanguage.strWifiLabel(syncOnWifiOnly),
+            )
+            MineSettingToggleRow(
+                icon = Icons.Filled.DateRange,
+                title = appLanguage.strAutoArchiveTitle(),
+                subtitle = appLanguage.strAutoArchive(autoArchiveEnabled),
+                accent = ClockGreen,
+                checked = autoArchiveEnabled,
+                onCheckedChange = onAutoArchiveChange,
+                statusLabel = appLanguage.strWeeklyManual(autoArchiveEnabled),
+            )
+
+            // Theme toggle inline
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .height(44.dp)
+                            .background(ClockYellow.copy(alpha = 0.12f), RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Edit,
+                            contentDescription = appLanguage.strAppearance(),
+                            tint = ClockYellow,
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = appLanguage.strAppearance(),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = if (isNightMode) appLanguage.strNightMode() else appLanguage.strDayMode(),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                ModeToggleRow(
+                    isNightMode = isNightMode,
+                    onNightModeChange = { onNightModeChange(!isNightMode) },
+                )
+            }
+
+            // Language selector inline
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .height(44.dp)
+                            .background(ClockPurple.copy(alpha = 0.12f), RoundedCornerShape(16.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = appLanguage.strLanguage(),
+                            tint = ClockPurple,
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = appLanguage.strLanguage(),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = appLanguage.displayName,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f),
+                            shape = RoundedCornerShape(15.dp),
+                        )
+                        .padding(horizontal = 3.dp, vertical = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AppLanguage.values().forEach { lang ->
+                        val selected = appLanguage == lang
+                        CompactModeChip(
+                            text = lang.code,
+                            timeRange = null,
+                            selected = selected,
+                            onClick = { onLanguageChange(lang) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+private data class MineTodayTaskStats(
+    val totalTaskCount: Int,
+    val totalPlannedMinutes: Int,
+    val activeTaskTitle: String?,
+    val nextTaskTitle: String?,
+    val nextTaskStartLabel: String?,
+)
+
+private data class MineGoalOption(
+    val label: String,
+    val hint: String,
+    val accent: Color,
+)
+
+private fun mineGoalOptions(): List<MineGoalOption> = listOf(
+    MineGoalOption(label = "Steady", hint = "For class and internship balance", accent = ClockTeal),
+    MineGoalOption(label = "Balanced", hint = "Default pace for steady progress", accent = ClockPurple),
+    MineGoalOption(label = "Sprint", hint = "For short focused pushes", accent = ClockRed),
+)
+
+private fun buildDayTaskStats(
+    tasks: List<TimeTask>,
+    now: LocalTime,
+): MineTodayTaskStats {
+    val sortedTasks = tasks.sortedBy { it.startTotalMinutes() }
+    val activeTask = sortedTasks.firstOrNull { isTaskActive(it, now) }
+    val nextTask = sortedTasks
+        .filter { !isTaskActive(it, now) }
+        .minByOrNull { minutesUntilTask(it, now) }
+
+    return MineTodayTaskStats(
+        totalTaskCount = sortedTasks.size,
+        totalPlannedMinutes = sortedTasks.sumOf { task ->
+            (task.normalizedEndTotalMinutes() - task.startTotalMinutes()).coerceAtLeast(0)
+        },
+        activeTaskTitle = activeTask?.title,
+        nextTaskTitle = nextTask?.title,
+        nextTaskStartLabel = nextTask?.let { formatHourMinute(it.startHour, it.startMinute) },
     )
 }
 
+private fun suggestedDraftTitle(
+    selectedGoal: String,
+    isNightMode: Boolean,
+): String {
+    val prefix = when (selectedGoal) {
+        "Steady" -> if (isNightMode) "Steady Night" else "Steady Block"
+        "Sprint" -> if (isNightMode) "Night Sprint" else "Sprint Focus"
+        else -> if (isNightMode) "Night Flow" else "Balanced Flow"
+    }
+    return "$prefix Plan"
+}
+
+private fun preferredDraftColor(selectedGoal: String): Color = when (selectedGoal) {
+    "Steady" -> ClockTeal
+    "Sprint" -> ClockRed
+    else -> ClockPurple
+}
+
+private fun defaultDraftRangeForGoal(
+    selectedGoal: String,
+    isNightMode: Boolean,
+    syncOnWifiOnly: Boolean,
+): Pair<Int, Int> {
+    val baseStart = when {
+        isNightMode && selectedGoal == "Sprint" -> 20 * 60
+        isNightMode -> 19 * 60
+        selectedGoal == "Steady" -> 9 * 60
+        selectedGoal == "Sprint" -> 10 * 60
+        else -> 8 * 60 + 30
+    }
+    val duration = when {
+        !syncOnWifiOnly && selectedGoal == "Sprint" -> 150
+        !syncOnWifiOnly -> 120
+        selectedGoal == "Steady" -> 75
+        else -> 90
+    }
+    val end = (baseStart + duration).coerceAtMost(23 * 60 + 59)
+    return baseStart to end.coerceAtLeast(baseStart + 1)
+}
+
+
+
+
+
+
+
+
+@Composable
+private fun MineStatusRow(
+    label: String,
+    value: String,
+    accent: Color,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(8.dp)
+                .height(8.dp)
+                .background(accent, CircleShape),
+        )
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = value,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+
+
+
+@Composable
+private fun MineGoalChip(
+    option: MineGoalOption,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    OutlinedCard(
+        modifier = Modifier
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .widthIn(min = 112.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = if (selected) option.accent.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
+        ),
+        border = BorderStroke(1.dp, if (selected) option.accent.copy(alpha = 0.28f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = option.label,
+                color = if (selected) option.accent else MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = option.hint,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
+    }
+}
+
+
+@Composable
+private fun MineSettingToggleRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    accent: Color,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    statusLabel: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(44.dp)
+                .height(44.dp)
+                .background(accent.copy(alpha = 0.12f), RoundedCornerShape(16.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = accent,
+            )
+        }
+
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = title,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = subtitle,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+            )
+            Text(
+                text = statusLabel,
+                color = accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+
+
+
+
+
 @Composable
 private fun ReservedRootPage(
+
+
     title: String,
     subtitle: String,
     sectionLabel: String,
@@ -2697,62 +4047,9 @@ private fun ReservedRootPage(
 }
 
 
-    label: String,
-    values: List<Int>,
-    selectedValue: Int,
-    modifier: Modifier = Modifier,
-    onSelected: (Int) -> Unit,
-) {
-    val selectedIndex = values.indexOf(selectedValue).coerceAtLeast(0)
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = max(0, selectedIndex - 2))
 
-    LaunchedEffect(selectedValue) {
-        val target = max(0, values.indexOf(selectedValue) - 2)
-        listState.scrollToItem(target)
-    }
 
-    Column(modifier = modifier) {
-        Text(
-            text = label,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        OutlinedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
-        ) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(176.dp),
-            ) {
-                items(values.size) { index ->
-                    val option = values[index]
-                    val isSelected = option == selectedValue
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelected(option) }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = option.toTwoDigits(),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
-                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                            fontSize = if (isSelected) 22.sp else 18.sp,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
+
 
 
 
@@ -3054,53 +4351,53 @@ private fun ProjectSummaryCard(
     sectionTitle: String,
     task: TimeTask?,
 ) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+    // Flat layout — no card wrapper, just a divider-accented row
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.08f),
+                RoundedCornerShape(14.dp),
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(12.dp)
-                        .height(12.dp)
-                        .background((task?.color ?: MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)), CircleShape),
-                )
-                Text(
-                    text = if (task == null) sectionTitle else "$sectionTitle: ${task.title}",
-                    color = if (task == null) {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.34f)
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-
-            }
-            if (task != null) {
-                Text(
-                    text = task.prettyTimeRange(),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(start = 22.dp),
-                )
-            }
+            Box(
+                modifier = Modifier
+                    .width(10.dp)
+                    .height(10.dp)
+                    .background(
+                        (task?.color ?: MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)),
+                        CircleShape,
+                    ),
+            )
+            Text(
+                text = if (task == null) sectionTitle else "$sectionTitle: ${task.title}",
+                color = if (task == null) {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.34f)
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (task != null) {
+            Text(
+                text = task.prettyTimeRange(),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 20.dp),
+            )
         }
     }
 }
@@ -3116,6 +4413,7 @@ private fun SnapTimePicker(
     minTotalMinutes: Int,
     occupiedTimes: Set<Int>,
     isDarkMode: Boolean,
+    appLanguage: AppLanguage = LocalAppLanguage.current,
     onHourSelected: (Int) -> Unit,
     onMinuteSelected: (Int) -> Unit,
 ) {
@@ -3133,7 +4431,7 @@ private fun SnapTimePicker(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         SnapWheelColumn(
-            label = "时",
+            label = appLanguage.strHourLabel(),
             values = enabledHours,
             selectedValue = effectiveHour,
             modifier = Modifier.weight(1f),
@@ -3141,7 +4439,7 @@ private fun SnapTimePicker(
             onSelected = onHourSelected,
         )
         SnapWheelColumn(
-            label = "分",
+            label = appLanguage.strMinuteLabel(),
             values = enabledMinutes,
             selectedValue = effectiveMinute,
             modifier = Modifier.weight(1f),
@@ -3681,12 +4979,62 @@ private fun parseHourMinute(value: String): Int {
 
 
 
+private fun encodeStoredTasks(tasks: List<TimeTask>): String {
+    val payload = JSONArray()
+    tasks.forEach { task ->
+        payload.put(
+            JSONObject().apply {
+                put("id", task.id)
+                put("title", task.title)
+                put("date", task.date.toString())
+                put("startHour", task.startHour)
+                put("startMinute", task.startMinute)
+                put("endHour", task.endHour)
+                put("endMinute", task.endMinute)
+                put("colorArgb", task.color.toArgb())
+            },
+        )
+    }
+    return payload.toString()
+}
+
+private fun decodeStoredTasks(raw: String): List<TimeTask> = runCatching {
+    val payload = JSONArray(raw)
+    buildList(payload.length()) {
+        for (index in 0 until payload.length()) {
+            val item = payload.optJSONObject(index) ?: continue
+            val id = item.optString("id").ifBlank { "task-${System.currentTimeMillis()}-$index" }
+            val title = item.optString("title").ifBlank { "Untitled project" }
+            val date = item.optString("date").takeIf { it.isNotBlank() }?.let(LocalDate::parse) ?: LocalDate.now()
+            add(
+                TimeTask(
+                    id = id,
+                    title = title,
+                    date = date,
+                    startHour = item.optInt("startHour").coerceIn(0, 23),
+                    startMinute = item.optInt("startMinute").coerceIn(0, 59),
+                    endHour = item.optInt("endHour").coerceIn(0, 23),
+                    endMinute = item.optInt("endMinute").coerceIn(0, 59),
+                    color = Color(item.optInt("colorArgb", taskColorPalette.first().toArgb())),
+                ),
+            )
+        }
+    }
+}.getOrElse { emptyList() }
+
 private fun rangesOverlap(
     startA: Int,
     endA: Int,
     startB: Int,
     endB: Int,
 ): Boolean = startA < endB && startB < endA
+
+
+
+
+
+
+
 
 
 
